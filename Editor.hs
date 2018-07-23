@@ -1,35 +1,114 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE RecordWildCards #-}
 
-class Frame a where
-    data Dormant a :: *
-    data Active a :: *
+import Prelude hiding (id, (.))
+import Control.Category
+import Control.Arrow (left)
+import System.IO (hSetBuffering, stdin, BufferMode(..))
 
-data SeqFrame a
-instance (Frame a) => Frame (SeqFrame a) where
-    data Dormant (SeqFrame a) = SeqDormant [Dormant a]
-    data Active (SeqFrame a)
-        = SeqWithin [Dormant a] (Active a) [Dormant a]
-        | SeqBetween [Dormant a] [Dormant a]
+data Iso a b = Iso (a -> b) (b -> a)
 
-class (Frame a) => Editor inp a where
-    handle :: inp -> Active a -> Either (Dormant a) (Active a)
+instance Category Iso where
+    id = Iso id id
+    Iso g g' . Iso f f' = Iso (g . f) (f' . g')
 
-data Motion = MLeft | MRight
+apply :: Iso a b -> a -> b
+apply (Iso f _) = f
 
-instance (Editor Motion a) => Editor Motion (SeqFrame a) where
-    handle MLeft (SeqWithin ls x rs) =
-        case handle MLeft x of
-            Left dor  -> Right $ SeqBetween ls (dor:rs)
-            Right act -> Right $ SeqWithin ls act rs
-    handle MLeft (SeqBetween [] rs) = Left $ SeqDormant rs
-    handle MLeft (SeqBetween (l:ls) rs) = Right $ SeqBetween ls (l:rs)
+inverse :: Iso a b -> Iso b a
+inverse (Iso f f') = Iso f' f
 
-    handle MRight (SeqWithin ls x rs) =
-        case handle MRight x of
-            Left dor  -> Right $ SeqBetween (dor:ls) rs
-            Right act -> Right $ SeqWithin ls act rs
-    handle MRight (SeqBetween ls []) = Left $ SeqDormant ls
-    handle MRight (SeqBetween ls (r:rs)) = Right $ SeqBetween (r:ls) rs
-        
+
+
+data Input = ILeft | IRight | IUp | IDown | IInsert Char
+
+data Editor a = forall s. Editor {
+    eCreate  :: a -> s,
+    eInput   :: Input -> s -> Either a s,
+    eView    :: s -> String
+  }
+
+mapE :: Iso a b -> Editor a -> Editor b
+mapE (Iso f f') (Editor {..}) = Editor {
+    eCreate = eCreate . f',
+    eInput  = \i s -> left f (eInput i s),
+    eView   = eView
+  }
+
+class Default a where
+    def :: a
+
+instance Default (Maybe a) where
+    def = Nothing
+
+instance (Default a, Default b) => Default (a,b) where
+    def = (def, def)
+
+class View a where
+    view :: a -> String
+
+instance View Char where
+    view c = [c]
+
+instance (View a) => View (Maybe a) where
+    view Nothing = "_"
+    view (Just x) = view x
+
+instance (View a, View b) => View (a,b) where
+    view (a,b) = view a ++ view b
+
+char :: Editor (Maybe Char)
+char = Editor {
+    eCreate = id,
+    eInput  = \i s -> case i of
+        IInsert c | Nothing <- s -> Right (Just c)
+        _ -> Left s,
+    eView   = view
+  }
+
+pair :: (View a, View b) => Editor a -> Editor b -> Editor (a,b)
+pair (Editor { eCreate = createA, eInput = inputA, eView = viewA }) 
+     (Editor { eCreate = createB, eInput = inputB, eView = viewB }) 
+    = Editor {
+        eCreate = \(a, b) -> Left (createA a, b),
+        eInput  = input,
+        eView = \case
+            Left (as, b) -> viewA as ++ view b
+            Right (a, bs) -> view a ++ viewB bs
+      }
+    where
+    input i (Left (as, b)) = case inputA i as of
+        Left a' -> 
+            let s' = Right (a', createB b) in
+            input i s'
+        Right as' -> Right (Left (as', b))
+    input i (Right (a, bs)) = case inputB i bs of
+        Left b' -> Left (a, b')
+        Right bs' -> Right (Right (a, bs'))
+
+test = pair char char
+
+main :: IO ()
+main = do
+    hSetBuffering stdin NoBuffering
+    go test
+  where
+    go (Editor {..}) = do
+        let s = eCreate def
+        step s
+      where
+        step s = do
+            putStrLn $ eView s
+            i <- getChar >>= return . \case
+                        'H' -> ILeft
+                        'J' -> IDown
+                        'K' -> IUp
+                        'L' -> IRight
+                        c   -> IInsert c
+            putStrLn ""
+            case eInput i s of
+                Left r -> putStrLn $ view r
+                Right s' -> step s'
