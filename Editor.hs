@@ -7,7 +7,7 @@
 import Prelude hiding (id, (.))
 import Control.Category
 import System.IO (hSetBuffering, stdin, BufferMode(..))
-import Control.Applicative
+import Control.Applicative hiding (optional)
 
 data Iso a b = Iso (a -> b) (b -> a)
 
@@ -42,6 +42,23 @@ mapMachine (Iso f f') (Machine {..}) = Machine {
 
 data Editor a = forall s. View s => Editor (Machine Maybe s a)
 
+mapEditor :: Iso a b -> Editor a -> Editor b
+mapEditor iso (Editor m) = Editor (mapMachine iso m)
+
+
+data EditorState a = forall s. View s => EditorState (Machine Maybe s a) s
+
+editorMachine :: Editor a -> Machine Maybe (EditorState a) a
+editorMachine e = Machine {
+    mCreate = \a -> case e of Editor m -> EditorState m (mCreate m a),
+    mObserve = \(EditorState m s) -> mObserve m s,
+    mInput = \i (EditorState m s) -> EditorState m <$> mInput m i s
+  }
+
+instance View (EditorState a) where
+    view (EditorState _ s) = view s
+
+
 class Default a where
     def :: a
 
@@ -64,13 +81,12 @@ instance (View a) => View (Maybe a) where
 instance (View a, View b) => View (a,b) where
     view (a,b) = view a ++ view b
 
-charMachine :: (Alternative m) => Machine Maybe (Maybe Char) (Maybe Char)
+charMachine :: (Alternative m) => Machine m (Maybe Char) (Maybe Char)
 charMachine = Machine {
     mCreate = id,
     mObserve = id,
     mInput = \i s -> case i of
         IInsert c | Nothing <- s -> pure (Just c)
-        IChange -> pure Nothing
         _ -> empty
   }
 
@@ -118,8 +134,36 @@ pairMachine ma mb = Machine {
 pair :: (View a, View b) => Editor a -> Editor b -> Editor (a,b)
 pair (Editor ma) (Editor mb) = Editor (pairMachine ma mb)
 
-test :: Editor (Maybe Char, Maybe Char)
-test = pair char char
+
+optionalMachine :: (Alternative m, Default a) => Machine m s a -> Machine m (Maybe s) (Maybe a)
+optionalMachine m = Machine {
+    mCreate = const Nothing,
+    mObserve = fmap (mObserve m),
+    mInput = input
+  }
+    where
+    input i Nothing = case i of
+        IInsert{} -> input i (Just (mCreate m def))
+        _ -> empty
+    input i (Just s) = Just <$> mInput m i s
+
+optional :: (Default a) => Editor a -> Editor (Maybe a)
+optional e = Editor (optionalMachine (editorMachine e))
+
+instance Default [a] where
+    def = []
+
+instance (View a) => View [a] where
+    view [] = ""
+    view (x:xs) = view x ++ view xs
+ 
+test :: Editor String
+test = mapEditor siso $ pair char (mapEditor liso $ optional test)
+    where
+    siso = Iso (\(x,xs) -> maybe xs (:xs) x) 
+               (\case [] -> (Nothing, []); (x:xs) -> (Just x,xs))
+
+    liso = Iso (maybe [] id) Just
 
 main :: IO ()
 main = do
@@ -140,5 +184,5 @@ main = do
                         c   -> IInsert c
             putStrLn ""
             case mInput m i s of
-                Nothing -> putStrLn . view $ mObserve m s
+                Nothing -> step s
                 Just s' -> step s'
