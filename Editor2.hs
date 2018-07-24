@@ -25,11 +25,8 @@ instance Alternative Handler where
 data Action a
     = Yield (View a) (Handler (Action a))
     | Done a
-    deriving (Functor)
 
 data View a = View String a
-    deriving (Functor)
-
 
 choiceWith :: (a -> a -> a) -> Handler a -> Handler a -> Handler a
 choiceWith f (Handler h) (Handler h') = Handler $ \i -> 
