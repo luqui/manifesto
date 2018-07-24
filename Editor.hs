@@ -98,42 +98,33 @@ char :: Editor (Maybe Char)
 char = Editor charMachine
 
 data PairState sa sb a b
-    = PairFocus a b
-    | LeftFocus sa b
+    = LeftFocus sa b
     | RightFocus a sb
     deriving Show
 
 instance (View sa, View sb, View a, View b) => View (PairState sa sb a b) where
-    view (PairFocus a b) = "[" ++ view a ++ view b ++ "]"
     view (LeftFocus sa b) = view sa ++ view b
     view (RightFocus a sb) = view a ++ view sb
 
 pairMachine :: (Alternative m, View a, View b, View sa, View sb, Show (m (PairState sa sb a b)))
             => Machine m sa a -> Machine m sb b -> Machine m (PairState sa sb a b) (a,b)
 pairMachine ma mb = Machine {
-    mCreate = \(a,b) -> PairFocus a b,
+    mCreate = \(a,b) -> LeftFocus (mCreate ma a) b,
     mObserve = \case
-        PairFocus a b -> (a, b)
         LeftFocus sa b -> (mObserve ma sa, b)
         RightFocus a sb -> (a, mObserve mb sb),
     mInput = input
   }
     where
-    input i (PairFocus a b) = case i of
-        IInsert{} -> input i (LeftFocus (mCreate ma a) b)
-        IDown -> pure $ LeftFocus (mCreate ma a) b
-        _ -> empty
     input i (LeftFocus sa b) = (LeftFocus <$> mInput ma i sa <*> pure b) <|> (
         let rightfocus = RightFocus (mObserve ma sa) (mCreate mb b) in
         case i of 
             IRight -> pure rightfocus
-            IUp    -> pure $ PairFocus (mObserve ma sa) b
             IInsert ch -> input (IInsert ch) rightfocus
             _ -> empty)
     input i (RightFocus a sb) = (RightFocus <$> pure a <*> mInput mb i sb) <|> (
         case i of 
             ILeft -> pure $ LeftFocus (mCreate ma a) (mObserve mb sb)  
-            IUp   -> pure $ PairFocus a (mObserve mb sb)
             _ -> empty)
 
 pair :: (View a, View b) => Editor a -> Editor b -> Editor (a,b)
