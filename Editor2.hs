@@ -109,11 +109,14 @@ charS = (fmap.fmap) (:[]) char
 twoCharS :: Handler (Action String)
 twoCharS = fmap (handle viewString (\x -> (fmap.fmap) (x++) charS)) charS
 
+fourCharS :: Handler (Action String)
+fourCharS = fmap (handle viewString (\x -> (fmap.fmap) (x++) twoCharS)) twoCharS
+
 viewString :: String -> View String
 viewString x = View x x
 
 test :: Action String
-test = frame viewString (cursor viewString twoCharS) "hello"
+test = frame viewString (cursor viewString fourCharS) "hello"
 
 main :: IO ()
 main = do
