@@ -50,6 +50,10 @@ parallelA (Yield v h) (Yield _ h') = Yield v (choiceWith parallelA h h')
 Yield v h >>>= f = Yield v (fmap (>>>= f) h) 
 Done x >>>= f = f x
 
+handle :: (a -> View a) -> (a -> Handler (Action a)) -> Action a -> Action a
+handle viewer f (Yield v h) = Yield v (fmap (handle viewer f) h)
+handle viewer f (Done x) = Yield (viewer x) (f x)
+
 getValue :: View a -> a
 getValue (View _ x) = x
 
@@ -102,11 +106,14 @@ char = Handler $ \case
 charS :: Handler (Action String)
 charS = (fmap.fmap) (:[]) char
 
+twoCharS :: Handler (Action String)
+twoCharS = fmap (handle viewString (\x -> (fmap.fmap) (x++) charS)) charS
+
 viewString :: String -> View String
 viewString x = View x x
 
 test :: Action String
-test = frame viewString (cursor viewString charS) "hello"
+test = frame viewString (cursor viewString twoCharS) "hello"
 
 main :: IO ()
 main = do
