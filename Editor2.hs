@@ -30,6 +30,22 @@ data Action a
 data View a = View String a
     deriving (Functor)
 
+
+choiceWith :: (a -> a -> a) -> Handler a -> Handler a -> Handler a
+choiceWith f (Handler h) (Handler h') = Handler $ \i -> 
+    case (h i, h' i) of
+        (Nothing, Nothing) -> Nothing
+        (Just x, Nothing) -> Just x
+        (Nothing, Just y) -> Just y
+        (Just x, Just y)  -> Just (f x y)
+
+-- Run two actions in parallel, choosing which ever one finishes first.
+-- Intermediate views are left-biased!
+parallelA :: Action a -> Action a -> Action a
+parallelA _ (Done b) = Done b
+parallelA (Done a) _ = Done a
+parallelA (Yield v h) (Yield _ h') = Yield v (choiceWith parallelA h h')
+
 (>>>=) :: Action a -> (a -> Action a) -> Action a
 Yield v h >>>= f = Yield v (fmap (>>>= f) h) 
 Done x >>>= f = f x
@@ -73,9 +89,10 @@ cursor viewer inserth = go []
             _ -> Nothing
 
         insertHandler :: Handler (Action [a])
-        insertHandler = fmap doh inserth
+        insertHandler = fmap thenRecurse inserth
             where
-            doh x = mapView ((viewer (reverse pre) <++>) . (<++> emptyV "|" <++> viewer post)) x >>>= \xs -> go (reverse xs ++ pre) post
+            thenRecurse act = mapView ((viewer (reverse pre) <++>) . (<++> emptyV "|" <++> viewer post)) act
+                >>>= \xs -> go (reverse xs ++ pre) post
 
 char :: Handler (Action Char)
 char = Handler $ \case
