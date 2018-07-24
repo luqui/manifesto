@@ -1,0 +1,67 @@
+Wouldn't it be great if we could program the editor like we program with lists?
+Etc.
+
+I mean, I guess that's the idea.
+
+But I'm thinking about a cursor right now.  E.g. in some context we have a
+string, and we would like to implement a cursor.  It'd be great if I could do
+something with the simplicity of:
+
+  cursor xs = adjacent 
+    [ pre <+> "|" <+> post | (pre,post) <- zip (inits xs) (tails xs) ]
+
+There is of course much more to a cursor than just the list of states.  There
+are the motions and the edits.  The list we've created tells us a sort of
+left-right structure, but we also need up/down, insert, delete, all that.
+That's what makes it complicated.  How to express those?  How to simplify?
+
+We could do ups with a sort of global group marker
+
+  cursor xs = group xs (adjacent ...)
+
+Downs are a bit more work, since they are context dependent.  But maybe it's
+just
+
+  cursor xs = group xs $ adjacent
+    [ group (pre <+> "|" <+> post) ((pre ++) <$> edit post) | ... ]
+
+Meaning a group says how to go down (and back up once you're there).  
+
+I think one of the insights here is that we are essentially expressing a bunch
+of different ways of saying the same thing.  We destructure xs to find all the
+ways to express it.  But then we also have to modify it.
+
+Each  `pre <+> "|" <+> post` comes with the ability to edit.  So like
+
+  editCursor pre post = (pre <+> "|" <+> post) `withEdits` \case
+    c | isIdentChar c -> editCursor pre (c : post)
+    DEL -> editCursor (init pre) post
+
+But you know, this could work.  This is looking pretty nice.  What about my
+assoicative list example?
+
+  assocList xs = group xs $ adjacent [
+    (pre++).(++post) <$> (assocList ys) | (pre,ys,post) <- windows xs ]
+
+yeah easy.  This is great.
+
+We are not constructing AST nodes -- in fact, we are destructing them.  We are
+constructing views, which are AST nodes with extra information. A general editor
+has a type signature like
+
+    A -> Editor (View A)
+
+where View has an observer function View a -> a.  Not quite sure what that is
+yet.
+
+
+Uh oh, there's trouble.  What if we go down, edit, then come back up again?
+The edit should be preserved.  So `group` can't just restore the state that was
+there previously.  When we navigate back up, we need to re-run the destructurer
+on the edited input.  
+
+    cursor = group cursor $ \xs -> [ ... ]
+
+Those explicit fixed points are a bit awkward.
+
+vim: tw=80 :

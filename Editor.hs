@@ -103,8 +103,8 @@ data PairState sa sb a b
     deriving Show
 
 instance (View sa, View sb, View a, View b) => View (PairState sa sb a b) where
-    view (LeftFocus sa b) = view sa ++ view b
-    view (RightFocus a sb) = view a ++ view sb
+    view (LeftFocus sa b) = "[" ++ view sa ++ "]" ++ view b
+    view (RightFocus a sb) = view a ++ "[" ++ view sb ++ "]"
 
 pairMachine :: (Alternative m, View a, View b, View sa, View sb, Show (m (PairState sa sb a b)))
             => Machine m sa a -> Machine m sb b -> Machine m (PairState sa sb a b) (a,b)
