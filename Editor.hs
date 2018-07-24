@@ -24,6 +24,7 @@ inverse (Iso f f') = Iso f' f
 
 
 data Input = ILeft | IRight | IUp | IDown | IInsert Char
+    deriving Show
 
 -- A machine with a transition monad m, hidden state s,
 -- and observable state a.
@@ -58,6 +59,9 @@ editorMachine e = Machine {
 instance View (EditorState a) where
     view (EditorState _ s) = view s
 
+instance Show (EditorState a) where
+    show (EditorState _ s) = show s
+
 
 class Default a where
     def :: a
@@ -68,7 +72,7 @@ instance Default (Maybe a) where
 instance (Default a, Default b) => Default (a,b) where
     def = (def, def)
 
-class View a where
+class (Show a) => View a where
     view :: a -> String
 
 instance View Char where
@@ -97,13 +101,14 @@ data PairState sa sb a b
     = PairFocus a b
     | LeftFocus sa b
     | RightFocus a sb
+    deriving Show
 
 instance (View sa, View sb, View a, View b) => View (PairState sa sb a b) where
     view (PairFocus a b) = "[" ++ view a ++ view b ++ "]"
     view (LeftFocus sa b) = view sa ++ view b
     view (RightFocus a sb) = view a ++ view sb
 
-pairMachine :: (Alternative m) 
+pairMachine :: (Alternative m, View a, View b, View sa, View sb, Show (m (PairState sa sb a b)))
             => Machine m sa a -> Machine m sb b -> Machine m (PairState sa sb a b) (a,b)
 pairMachine ma mb = Machine {
     mCreate = \(a,b) -> PairFocus a b,
@@ -137,7 +142,7 @@ pair (Editor ma) (Editor mb) = Editor (pairMachine ma mb)
 
 optionalMachine :: (Alternative m, Default a) => Machine m s a -> Machine m (Maybe s) (Maybe a)
 optionalMachine m = Machine {
-    mCreate = const Nothing,
+    mCreate = fmap (mCreate m),
     mObserve = fmap (mObserve m),
     mInput = input
   }
@@ -157,13 +162,20 @@ instance (View a) => View [a] where
     view [] = ""
     view (x:xs) = view x ++ view xs
  
-test :: Editor String
-test = mapEditor siso $ pair char (mapEditor liso $ optional test)
-    where
-    siso = Iso (\(x,xs) -> maybe xs (:xs) x) 
-               (\case [] -> (Nothing, []); (x:xs) -> (Just x,xs))
+data EIdent = EIdent (Maybe Char) (Maybe EIdent)
+    deriving Show
 
-    liso = Iso (maybe [] id) Just
+instance View EIdent where
+    view (EIdent m xs) = view m ++ maybe "" view xs
+
+instance Default EIdent where
+    def = EIdent Nothing Nothing
+
+test :: Editor EIdent
+test = mapEditor siso $ pair char (optional test)
+    where
+    siso = Iso (uncurry EIdent) 
+               (\(EIdent x xs) -> (x,xs))
 
 main :: IO ()
 main = do
