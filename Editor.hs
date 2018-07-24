@@ -23,7 +23,7 @@ inverse (Iso f f') = Iso f' f
 
 
 
-data Input = ILeft | IRight | IUp | IDown | IInsert Char
+data Input = ILeft | IRight | IUp | IDown | IInsert Char | IDelete
     deriving Show
 
 -- A machine with a transition monad m, hidden state s,
@@ -139,20 +139,39 @@ pairMachine ma mb = Machine {
 pair :: (View a, View b) => Editor a -> Editor b -> Editor (a,b)
 pair (Editor ma) (Editor mb) = Editor (pairMachine ma mb)
 
+data OptionalState sa a
+    = OptNone
+    | OptFocus a
+    | OptInside sa
+    deriving (Show)
 
-optionalMachine :: (Alternative m, Default a) => Machine m s a -> Machine m (Maybe s) (Maybe a)
+instance (View sa, View a) => View (OptionalState sa a) where
+    view OptNone = "_"
+    view (OptFocus a) = "{" ++ view a ++ "}"
+    view (OptInside sa) = view sa
+
+instance Default (OptionalState sa a) where
+    def = OptNone
+
+optionalMachine :: (Alternative m, Default a) => Machine m s a -> Machine m (OptionalState s a) (Maybe a)
 optionalMachine m = Machine {
-    mCreate = fmap (mCreate m),
-    mObserve = fmap (mObserve m),
+    mCreate = maybe OptNone (OptInside . mCreate m),
+    mObserve = \case OptNone -> Nothing; OptFocus a -> Just a; OptInside sa -> Just (mObserve m sa),
     mInput = input
   }
     where
-    input i Nothing = case i of
-        IInsert{} -> input i (Just (mCreate m def))
+    input i OptNone = case i of
+        IInsert{} -> input i (OptInside (mCreate m def))
         _ -> empty
-    input i (Just s) = Just <$> mInput m i s
+    input i (OptFocus a) = case i of
+        IInsert{} -> input i (OptInside (mCreate m a))
+        IDelete -> pure OptNone
+        _ -> empty
+    input i (OptInside s) = (OptInside <$> mInput m i s) <|> (case i of
+        IUp -> pure (OptFocus (mObserve m s))
+        _ -> empty)
 
-optional :: (Default a) => Editor a -> Editor (Maybe a)
+optional :: (Default a, View a) => Editor a -> Editor (Maybe a)
 optional e = Editor (optionalMachine (editorMachine e))
 
 instance Default [a] where
@@ -193,6 +212,7 @@ main = do
                         'J' -> IDown
                         'K' -> IUp
                         'L' -> IRight
+                        'D' -> IDelete
                         c   -> IInsert c
             putStrLn ""
             case mInput m i s of
