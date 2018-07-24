@@ -64,4 +64,46 @@ on the edited input.
 
 Those explicit fixed points are a bit awkward.
 
+-----
+
+Ok, Actions, Handlers.  What are the different combinators on each.
+
+Handlers have immediate parallel choice
+
+    choice :: Handler a -> Handler a -> Handler a
+
+where you take whichever one matches the input, biasing to the left.  There's
+also a parallel composition that runs them both in parallel, taking whichever
+yields a result first.  However, we would need to say what to do with the view
+in the mean time.  We maybe also left-bias that, but then switch to the right
+view if the left view doesn't pan out.  I don't know if this is useful but it is
+something.
+
+    parallel :: Handler a -> Handler a -> Handler a
+
+Parallel has an analogous combinator on Actions.  Choice doesn't really (I guess
+we could choose the first input after the action, but that seems really
+arbitrary).
+
+Actions have dependent sequential composition as well:
+
+    sequence :: Action a -> (a -> Action a) -> Action a
+
+If we separated the view type from the result type this could be a monadic
+sequence
+
+    sequence :: Action v a -> (a -> Action v b) -> Action v b
+
+But I'm not sure if we want to do that.  Basically, we need some way to
+preview the first action before the second one starts taking effect.  There
+might be cause for Actions to have a separate return value, e.g. "success" or
+something.  In fact, maybe we could separate the caboose type, and have the
+caboose be
+
+    | Done v a
+
+which also comes with a view, what's being edited, and a result.  That's rather
+nice.  It's a bifunctor.
+
+
 vim: tw=80 :
