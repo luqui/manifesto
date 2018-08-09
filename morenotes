@@ -1,0 +1,158 @@
+Zippers suck.
+
+I just don't think they are a very good representation for what I'm after.  They
+hold too much information -- we need something that is more fluid with respect
+to changes.
+
+I'm thinking "paths", analogous to filesystem paths -- how to navigate from a
+given root to the node in question.  Paths will need to either be resilient to
+edits (which might be possible in a referentially opaque language) or, more
+likely, be able to be transported over an edit.
+
+    transform :: Patch -> Path -> Path
+
+We might even want to label a path with a phantom base type
+
+    transform :: Patch a b -> Path a -> Path b
+
+to ensure that we don't index into a tree with a path that doesn't make sense.
+As long as that is not too hard to work with...
+
+Navigate around the tree just by messing with paths.  Editors have the form:
+
+    someEdit :: Path -> Tree -> Tree
+
+or maybe
+
+    someEdit :: Path -> Tree -> (Tree, Path)
+
+typed
+
+    someEdit :: Path a -> Tree a -> exists b. (Tree b, Path b)
+
+Perhaps we use a data types a la carte sort of presentation, so the label of a
+path encodes its structure; the concrete type of a path spells out the levels of
+node types it goes through
+
+    Path (Program ': FunDecl ': Expr ': AddExpr)
+
+or what have you.  So for this small AST
+
+    data Decl where
+      Decl :: Name -> Expr -> Decl
+
+    data Expr where
+      AddExpr :: [Expr] -> Expr
+      NegExpr :: Expr -> Expr
+      IntExpr :: Integer -> Expr
+
+we might have paths like this
+
+    data Link Decl t where
+      LDeclName :: Link Decl Name
+      LDeclExpr :: Link Decl Expr
+
+    data Link Expr t where
+      LExprAdd :: Int -> Link Expr Expr
+      LExprNeg :: Link Expr Expr
+      LExprInt :: Link Expr Integer
+
+and then a path is a typed list of links
+
+    data Path t u where
+      PEnd :: Path t t
+      PLink :: Path t u -> Link u v -> Path t v
+
+--
+
+Ok, so let's say we are not worrying about syntax too much, since I don't think
+that's really the important part.  I just spent time modeling paths in a
+structured AST, yet I feel like it might be better to edit from a more
+unstructured/loose e-expression kind of perspective.  Hm.
+
+The interesting stuff is preserving a lot of semantics as we manipulate
+expressions.  I'm imagining adding a parameter to a function, let's say after
+the first parameter.
+
+    p <- findAll 'f   -- p is the set of paths to references to f
+    replace p `(\x. f x ?)
+    try $ beta1 p
+
+It's a bit of an imperative phrasing; edits one at a time on a global state.
+Might be ok though; merging trees edits doesn't sound fun. We need to worry
+about the other ps that we find continuing to be valid through the
+transformations -- in an expression like `f (f z)` that might be tricky.
+
+      p = { appL , appR.appL }
+    replace appL `(\x. f x ?)
+      (\x. f x ?) (f z)
+    try $ beta1 appL
+      f (f z) ?
+    replace (appR.appL) 
+      INVALID
+
+yeah, it is tricky.  We also can't necessarily serialize findAll, since we don't
+want to find the new f we just substituted in.  If the beta had dropped or
+duplicated its argument then we might get paths being dropped or duplicated.  If
+we treat paths as "path sets", which can duplicate or drop, can we always follow
+a path through a reduction/transformation?
+
+I don't think so.  Maybe we destroy paths when they become meaningless -- feels
+a bit off.  Search functions could preserve their "semantics" -- i.e. we
+maintain a *dynamic* response to findAll, so that we end up always returning a
+reference to f...
+
+What about an even less syntactic transformation. E.g.
+
+    addParam t = beta $ abstract 'f t `app` '(\x. f x ?) 
+
+so we abstract f out of t, making t a function of f, then apply it to the new
+expression, and reduce to get the tree back to a "readable" state.  Of course
+then inner expressions will not yet be reduced, e.g. we will still have
+expressions like
+
+    (\x. f x ?) y
+
+when really we want to normalize those too.  But we don't have a good way to
+find them to normalize them.  I don't think we want to go to full semantic
+presentation, where they flatten themselves out.
+
+Ok back to this example.  We have 
+
+    f (f x)             |   appR.appL
+    (\x. f x ?) (f x)   |   appR.appL
+
+now we apply beta1, which does affect the appR path.  But it explodes it into
+a set of paths depending on the use of the variable in the left expression.  In
+particular, we substitute the variable into appL.appR, so that's what we put in
+place of appR
+
+    f (f x) ?           | appL.appR.appL
+
+and there we go, the path is now referring to the inner f again.  It's cool, but
+it also means the semantics of beta reduction need to be encoded in the editor.
+That's a lot to ask for a real, complex programming language.  I mean, I guess
+it's up to whoever implements the beta strategy -- that could be "user level"
+stuff, not necessarily related to the semantics of the language directly.
+
+If we go with this, it seems that a transformation isn't just a function between
+trees, but also a transformation of paths.  If you move something, the
+transformation can tell that it's a move, rather than a delete/insert, for
+example.
+
+It is somehwat non-local to do this.  E.g. if we have a path in a register or
+something, and we "cut" part of the tree that the path refers to, we can't
+modify the path yet (or maybe we can modify the path to refer to the register
+now -- that implies that the register state is part of the tree, that cutting
+something to a register is akin to moving it to a "scratch area" of the AST ...
+that is kind of nice actually).  But I am not sure how much transforming paths
+will come into it?  I guess it already came into it for our simple replace
+example... I'm not sure how else to do a simultaneous search and replace with
+serach being functionally separated from replace.  I guess vim doesn't do any
+kind of separation like that, it's all rolled up into one command.
+
+Hmmmmmmmmmm this is complicated
+
+
+
+vim: tw=80 :
