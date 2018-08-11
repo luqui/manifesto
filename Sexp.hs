@@ -8,8 +8,9 @@
 module Sexp where
 
 import qualified Data.Text.Prettyprint.Doc as PP
+import qualified Data.Text.Prettyprint.Doc.Render.Terminal as PP
 import qualified System.Console.ANSI as ANSI
-import Data.Monoid (Monoid(..), First(..), (<>), mconcat)
+import Data.Monoid (Monoid(..), First(..), mconcat)
 import System.IO (hSetBuffering, stdin, BufferMode(..))
 
 data Sexp h = Sexp h [Sexp h]
@@ -45,10 +46,15 @@ viewCx viewer cx v = foldl (flip (viewFrame viewer)) (viewFocus viewer v) cx
 viewLoc :: Viewer h v -> Located h -> v
 viewLoc viewer (Located cx e) = viewCx viewer cx (view viewer e)
 
-lispViewer :: (Show h) => Viewer h (PP.Doc ann)
+
+data Style = Focused
+
+lispViewer :: (Show h) => Viewer h (PP.Doc Style)
 lispViewer = Viewer {
-    viewExp = \h vs -> "(" <> PP.sep (PP.pretty (show h) : vs) <> ")",
-    viewFocus = \v -> "{" <> v <> "}"
+    viewExp = \h -> \case
+        [] -> PP.parens (PP.pretty (show h))
+        vs -> PP.parens (PP.pretty (show h) PP.<+> PP.align (PP.sep vs)),
+    viewFocus = \v -> PP.annotate Focused v
   }
 
 
@@ -80,7 +86,9 @@ basicMotion = mconcat
            | otherwise -> First Nothing
 
 example :: Located String
-example = Located [] (Sexp "hello" [Sexp "good" [], Sexp "day" [Sexp "sir" [Sexp "or" [], Sexp "madam" []]], Sexp "how" [Sexp "art" [], Sexp "thou" []]])
+example = Located [] $ Sexp "doc" [r, Sexp "subbby" [r], r]
+    where
+    r = Sexp "hello" [Sexp "good" [], Sexp "day" [Sexp "sir" [Sexp "or" [], Sexp "madam" []]], Sexp "how" [Sexp "art" [], Sexp "thou" []]]
 
 main :: IO ()
 main = do
@@ -90,8 +98,10 @@ main = do
     go s = do
         ANSI.clearScreen
         ANSI.setCursorPosition 0 0
-        print $ viewLoc lispViewer s
+        PP.putDoc . ansify $ viewLoc lispViewer s
         c <- getChar
         case runEditor basicMotion c s of
             First Nothing -> go s
             First (Just s') -> go s'
+    ansify = PP.alterAnnotations $ \case
+        Focused -> [PP.bgColor PP.White, PP.color PP.Black]
