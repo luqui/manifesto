@@ -64,9 +64,16 @@ newtype Editor i h = Editor { runEditor :: i -> Located h -> First (Located h) }
 
 basicMotion :: Editor Char h
 basicMotion = mconcat  
-    [ entry 'k' up
-    , entry 'h' synleft
-    , entry 'l' synright
+    [ entry 'h' smallleft
+    , entry 'H' (drill downFirst)
+    , entry 'l' smallright
+    , entry 'L' (drill downLast)
+    , entry 'j' left
+    , entry 'J' (drill left)
+    , entry 'k' right
+    , entry 'K' (drill right)
+    , entry 'o' up  -- o for "out"
+    , entry 'O' (drill up)
     ]
     where
     up (Located (f:fs) e) = First . Just $ Located fs (fillFrame f e)
@@ -84,14 +91,13 @@ basicMotion = mconcat
     right (Located (Frame h ls (r:rs) : fs) e) = First . Just $ Located (Frame h (e:ls) rs : fs) r
     right _ = mempty
 
-    synright = downFirst <> right <> r
+    smallright = downFirst <> right <> r
         where
         -- this will terminate because at some point up will fail
         r = up `andThen` (right <> r)
 
-    synleft = (left `andThen` drillDown) <> up
-        where
-        drillDown = (downLast `andThen` drillDown) <> nomotion
+    smallleft = (left `andThen` drill downLast) <> up
+    drill m = (m `andThen` drill m) <> nomotion
 
     andThen f g l = First $ getFirst (f l) >>= getFirst . g
 
