@@ -1,0 +1,4 @@
+Typed holes / agda-style interactive type-driven programming
+Semantic find/replace
+Alpha & beta reduce & expand
+

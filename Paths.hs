@@ -1,9 +1,10 @@
 {-# OPTIONS -Wall #-}
-{-# LANGUAGE TypeFamilies, GADTs, RankNTypes, LambdaCase, ConstraintKinds, DeriveFunctor #-}
+{-# LANGUAGE TypeFamilies, GADTs, RankNTypes, LambdaCase, ConstraintKinds, DeriveFunctor, TupleSections #-}
 
 import Prelude hiding (id, (.))
 import Control.Category
 import Control.Monad ((>=>), ap)
+import Control.Comonad (Comonad(..), (=<=))
 
 
 data Input i a 
@@ -32,10 +33,24 @@ instance Category SemiLens where
         (z,ctob) <- g y
         return (z, btoa . ctob)
 
+cokleisliComposeLens :: (Comonad f)
+                      => SemiLens b (f c) -> SemiLens a (f b) -> SemiLens a (f c)
+cokleisliComposeLens b_c a_b = SemiLens $ \a -> do
+    (fb, fb_a) <- runSemiLens a_b a
+    (fmap.fmap) (fb_a =<=) . extract . fmap (runSemiLens b_c) $ fb
+
 class Node n where
     data Index n :: (* -> *) -> * -> *
 
     indexLens :: Index n f a -> SemiLens (n f) (f a)
+
+data Path n f a where
+    PathNil  :: Path n f (n f)
+    PathSnoc :: Path n f (n' f) -> Index n' f a -> Path n f a
+
+pathLens :: (Comonad f) => Path n f a -> SemiLens (n f) (f a)
+pathLens PathNil = id
+pathLens (PathSnoc p i) = undefined
 
 
 newtype Name = Name String
