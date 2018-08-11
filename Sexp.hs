@@ -13,13 +13,13 @@ import qualified Data.Text.Prettyprint.Doc as PP
 import qualified Data.Text.Prettyprint.Doc.Render.Terminal as PP
 import qualified System.Console.ANSI as ANSI
 import Data.Monoid (Monoid(..), First(..), (<>), mconcat)
-import System.IO (hSetBuffering, stdin, BufferMode(..))
+import System.IO (hSetBuffering, stdin, stdout, BufferMode(..))
 
 data Sexp h = Sexp h [Sexp h]
-    deriving (Show)
+    deriving (Show, Functor)
 
 data Frame h = Frame h [Sexp h] [Sexp h]
-    deriving (Show)
+    deriving (Show, Functor)
 
 fillFrame :: Frame h -> Sexp h -> Sexp h
 fillFrame (Frame h l r) e = Sexp h (reverse l ++ [e] ++ r)
@@ -27,7 +27,7 @@ fillFrame (Frame h l r) e = Sexp h (reverse l ++ [e] ++ r)
 type Context h = [Frame h]   -- inside-out
 
 data Located h = Located (Context h) (Sexp h)
-    deriving (Show)
+    deriving (Show, Functor)
 
 
 data Viewer h v = Viewer {
@@ -51,11 +51,11 @@ viewLoc viewer (Located cx e) = viewCx viewer cx (view viewer e)
 
 data Style = Focused
 
-lispViewer :: (Show h) => Viewer h (PP.Doc Style)
+lispViewer :: Viewer String (PP.Doc Style)
 lispViewer = Viewer {
     viewExp = \h -> \case
-        [] -> PP.parens (PP.pretty (show h))
-        vs -> PP.parens (PP.pretty (show h) PP.<+> PP.align (PP.sep vs)),
+        [] -> PP.parens (PP.pretty h)
+        vs -> PP.parens (PP.pretty h PP.<+> PP.align (PP.sep vs)),
     viewFocus = \v -> PP.annotate Focused v
   }
 
@@ -156,10 +156,11 @@ main = do
     go s editor = do
         ANSI.clearScreen
         ANSI.setCursorPosition 0 0
-        PP.putDoc . ansify $ viewLoc lispViewer s
+        PP.renderIO stdout . PP.layoutPretty options . ansify $ viewLoc lispViewer s
         c <- getChar
         case runEditor editor c s of
             First Nothing -> go s editor
             First (Just (s', editor')) -> go s' editor'
     ansify = PP.alterAnnotations $ \case
         Focused -> [PP.bgColor PP.White, PP.color PP.Black]
+    options = PP.LayoutOptions { PP.layoutPageWidth = PP.AvailablePerLine 50 1.0 }
