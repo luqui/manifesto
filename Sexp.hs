@@ -7,26 +7,27 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ViewPatterns #-}
 
-module Sexp where
+module SExp where
 
 import qualified Data.Text.Prettyprint.Doc as PP
 import qualified Data.Text.Prettyprint.Doc.Render.Terminal as PP
 import qualified System.Console.ANSI as ANSI
+import Data.Function (fix)
 import Data.Monoid (Monoid(..), First(..), (<>), mconcat)
 import System.IO (hSetBuffering, stdin, stdout, BufferMode(..))
 
-data Sexp h = Sexp h [Sexp h]
+data SExp h = SExp h [SExp h]
     deriving (Show, Functor)
 
-data Frame h = Frame h [Sexp h] [Sexp h]
+data Frame h = Frame h [SExp h] [SExp h]
     deriving (Show, Functor)
 
-fillFrame :: Frame h -> Sexp h -> Sexp h
-fillFrame (Frame h l r) e = Sexp h (reverse l ++ [e] ++ r)
+fillFrame :: Frame h -> SExp h -> SExp h
+fillFrame (Frame h l r) e = SExp h (reverse l ++ [e] ++ r)
 
 type Context h = [Frame h]   -- inside-out
 
-data Located h = Located (Context h) (Sexp h)
+data Located h = Located (Context h) (SExp h)
     deriving (Show, Functor)
 
 
@@ -35,8 +36,8 @@ data Viewer h v = Viewer {
     viewFocus :: v -> v
   }
 
-view :: Viewer h v -> Sexp h -> v
-view viewer (Sexp h subs) = viewExp viewer h (map (view viewer) subs)
+view :: Viewer h v -> SExp h -> v
+view viewer (SExp h subs) = viewExp viewer h (map (view viewer) subs)
 
 viewFrame :: Viewer h v -> Frame h -> v -> v
 viewFrame viewer (Frame h l r) fill =
@@ -56,9 +57,32 @@ lispViewer = Viewer {
     viewExp = \h -> \case
         [] -> PP.parens (PP.pretty h)
         vs -> PP.parens (PP.pretty h PP.<+> PP.align (PP.sep vs)),
-    viewFocus = \v -> PP.annotate Focused v
+    viewFocus = PP.annotate Focused
   }
 
+
+type Var = String
+
+data ExpTag
+    = TLambda
+    | TApp
+    | TVar String
+    deriving Show
+
+expViewer :: Viewer ExpTag (Bool -> Bool -> PP.Doc Style)
+expViewer = Viewer {
+    viewExp = \h args lp ap -> case h of
+        TLambda | [var, body] <- args -> 
+            mparens lp $ "\\" <> var False False <> "." PP.<+> body False False
+        TApp | [f, x] <- args ->
+            mparens ap $ f True False PP.<+> x True True
+        TVar v -> PP.pretty v
+        _ -> PP.parens $ PP.sep (PP.pretty (show h) : map (\f -> f True True) args),
+    viewFocus = \v lp ap -> PP.annotate Focused (v lp ap)
+    } 
+    where
+    mparens True = PP.parens
+    mparens False = id
 
 newtype Editor i h = Editor { runEditor :: i -> Located h -> First (Located h, Editor i h) }
     deriving (Semigroup, Monoid)
@@ -82,10 +106,10 @@ basicMotion cont = mconcat
     up (Located (f:fs) e) = return $ Located fs (fillFrame f e)
     up _ = mempty
 
-    downFirst (Located fs (Sexp h (e:es))) = return $ Located (Frame h [] es : fs) e
+    downFirst (Located fs (SExp h (e:es))) = return $ Located (Frame h [] es : fs) e
     downFirst _ = mempty
 
-    downLast (Located fs (Sexp h (reverse -> e:es))) = return $ Located (Frame h es [] : fs) e
+    downLast (Located fs (SExp h (reverse -> e:es))) = return $ Located (Frame h es [] : fs) e
     downLast _ = mempty
 
     left (Located (Frame h (l:ls) rs : fs) e) = return $ Located (Frame h ls (e:rs) : fs) l
@@ -109,32 +133,32 @@ basicMotion cont = mconcat
            | otherwise -> mempty
 
 textEditMode :: Open (Editor Char String)
-textEditMode cont = Editor $ \i (Located cx (Sexp h es)) ->
+textEditMode cont = Editor $ \i (Located cx (SExp h es)) ->
     if | i == '\DEL' -> 
-        return (Located cx (Sexp (init h) es), textEditMode cont)
+        return (Located cx (SExp (init h) es), textEditMode cont)
        | i == '\ESC' ->
-        return (Located cx (Sexp h es), cont)
+        return (Located cx (SExp h es), cont)
        | otherwise -> 
-        return (Located cx (Sexp (h ++ [i]) es), textEditMode cont)
+        return (Located cx (SExp (h ++ [i]) es), textEditMode cont)
 
 editCommands :: Open (Editor Char String)
 editCommands cont = Editor $ \i loc ->
     case i of
         'e' -> return (loc, textEditMode cont)
-        'a' | Located fs (Sexp h es) <- loc
-            -> return (Located (Frame h (reverse es) [] : fs) (Sexp "" []), textEditMode cont)
+        'a' | Located fs (SExp h es) <- loc
+            -> return (Located (Frame h (reverse es) [] : fs) (SExp "" []), textEditMode cont)
         'A' | Located (Frame h l r : fs) e <- loc
-            -> return (Located (Frame h (e:l) r : fs) (Sexp "" []), textEditMode cont)
-        'i' | Located fs (Sexp h es) <- loc
-            -> return (Located (Frame h [] es : fs) (Sexp "" []), textEditMode cont)
+            -> return (Located (Frame h (e:l) r : fs) (SExp "" []), textEditMode cont)
+        'i' | Located fs (SExp h es) <- loc
+            -> return (Located (Frame h [] es : fs) (SExp "" []), textEditMode cont)
         'I' | Located (Frame h l r : fs) e <- loc
-            -> return (Located (Frame h l (e:r) : fs) (Sexp "" []), textEditMode cont)
+            -> return (Located (Frame h l (e:r) : fs) (SExp "" []), textEditMode cont)
         'd' | Located (Frame h ls (r:rs) : fs) _ <- loc
             -> return (Located (Frame h ls rs : fs) r, cont)
             | Located (Frame h (l:ls) [] : fs) _ <- loc
             -> return (Located (Frame h ls [] : fs) l, cont)
             | Located (Frame h [] [] : fs) _ <- loc
-            -> return (Located fs (Sexp h []), cont)
+            -> return (Located fs (SExp h []), cont)
         _ -> mempty
 
 mainEditor :: Editor Char String
@@ -144,19 +168,27 @@ mainEditor = basicMotion c <> editCommands c
 
 
 example :: Located String
-example = Located [] $ Sexp "doc" [r, Sexp "subbby" [r], r]
+example = Located [] $ SExp "doc" [r, SExp "subbby" [r], r]
     where
-    r = Sexp "hello" [Sexp "good" [], Sexp "day" [Sexp "sir" [Sexp "or" [], Sexp "madam" []]], Sexp "how" [Sexp "art" [], Sexp "thou" []]]
+    r = SExp "hello" [SExp "good" [], SExp "day" [SExp "sir" [SExp "or" [], SExp "madam" []]], SExp "how" [SExp "art" [], SExp "thou" []]]
+
+exampleExp :: Located ExpTag
+exampleExp = Located [] $ SExp TLambda [SExp (TVar "f") [], 
+    SExp TApp [
+        SExp TLambda [SExp (TVar "x") [], SExp TApp [SExp (TVar "f") [], SExp TApp [SExp (TVar "x") [], SExp (TVar "x") []]]],
+        SExp TLambda [SExp (TVar "x") [], SExp TApp [SExp (TVar "f") [], SExp TApp [SExp (TVar "x") [], SExp (TVar "x") []]]]
+    ]]
+
 
 main :: IO ()
 main = do
     hSetBuffering stdin NoBuffering
-    go example mainEditor
+    go exampleExp (fix basicMotion)
   where
     go s editor = do
         ANSI.clearScreen
         ANSI.setCursorPosition 0 0
-        PP.renderIO stdout . PP.layoutPretty options . ansify $ viewLoc lispViewer s
+        PP.renderIO stdout . PP.layoutPretty options . ansify $ viewLoc expViewer s False False
         c <- getChar
         case runEditor editor c s of
             First Nothing -> go s editor
