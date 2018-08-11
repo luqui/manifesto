@@ -121,8 +121,14 @@ editCommands :: Open (Editor Char String)
 editCommands cont = Editor $ \i loc ->
     case i of
         'e' -> return (loc, textEditMode cont)
-        'a' | Located (Frame h l r : fs) e <- loc
+        'a' | Located fs (Sexp h es) <- loc
+            -> return (Located (Frame h (reverse es) [] : fs) (Sexp "" []), textEditMode cont)
+        'A' | Located (Frame h l r : fs) e <- loc
             -> return (Located (Frame h (e:l) r : fs) (Sexp "" []), textEditMode cont)
+        'i' | Located fs (Sexp h es) <- loc
+            -> return (Located (Frame h [] es : fs) (Sexp "" []), textEditMode cont)
+        'I' | Located (Frame h l r : fs) e <- loc
+            -> return (Located (Frame h l (e:r) : fs) (Sexp "" []), textEditMode cont)
         'd' | Located (Frame h ls (r:rs) : fs) _ <- loc
             -> return (Located (Frame h ls rs : fs) r, cont)
             | Located (Frame h (l:ls) [] : fs) _ <- loc
