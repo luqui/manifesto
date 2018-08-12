@@ -5,8 +5,10 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Differentiable where
 
@@ -36,6 +38,7 @@ type Program = [Defn]
 -- next a Defn context.
 
 data Loc h a = Loc (D h a) a
+deriving instance (Show (D h a), Show a) => Show (Loc h a)
 
 class HFunctor h where
     hfmap :: (forall x. f x -> g x) -> h f -> h g
@@ -56,15 +59,19 @@ data Context a b where
 
 
 instance Repr () where
-    type Base () = Const ()
-    toBase () = Const ()
-    fromBase (Const ()) = ()
+    type Base () = Field ()
+    toBase () = Field (Identity ())
+    fromBase (Field (Identity ())) = ()
 
+instance Repr Integer where
+    type Base Integer = Field Integer
+    toBase z = Field (Identity z)
+    fromBase (Field (Identity z)) = z
 
-instance Repr (a,b) where
-    type Base (a,b) = Const a :*: Const b
-    toBase (a,b) = HPair (Const a) (Const b)
-    fromBase (HPair (Const a) (Const b)) = (a,b)
+instance (Repr a, Repr b) => Repr (a,b) where
+    type Base (a,b) = Base a :*: Base b
+    toBase (a,b) = HPair (toBase a) (toBase b)
+    fromBase (HPair a b) = (fromBase a, fromBase b)
 
 
 instance Repr (Either a b) where
@@ -78,6 +85,7 @@ instance Repr (Either a b) where
 -- Another approach to compositionality.
 
 newtype Field a f = Field { getField :: f a }
+    deriving (Show)
 
 instance HFunctor (Field a) where
     hfmap f (Field x) = Field (f x)
@@ -88,8 +96,11 @@ instance Differentiable (Field a) where
     toFrames (Field (Identity x)) = Field (Loc DField x)
     fillHole (Loc DField x) = Field (Identity x)
 
+deriving instance Show (D (Field a) x)
+
 
 newtype Const a f = Const { getConst :: a }
+    deriving (Show)
 
 instance HFunctor (Const a) where
     hfmap _ (Const x) = Const x
@@ -99,8 +110,11 @@ instance Differentiable (Const a) where
     toFrames (Const x) = Const x
     fillHole (Loc cx _) = case cx of {}
 
+deriving instance Show (D (Const a) x)
+
 
 data (h :*: h') f = HPair (h f) (h' f)
+    deriving (Show)
 
 instance (HFunctor h, HFunctor h') => HFunctor (h :*: h') where
     hfmap f (HPair x y) = HPair (hfmap f x) (hfmap f y)
@@ -115,6 +129,9 @@ instance (Differentiable h, Differentiable h') => Differentiable (h :*: h') wher
     fillHole (Loc (DProductL c y) a) = HPair (fillHole (Loc c a)) y
     fillHole (Loc (DProductR x c) a) = HPair x (fillHole (Loc c a))
 
+deriving instance 
+    (Show (D h x), Show (D h' x), Show (h Identity), Show (h' Identity)) 
+    => Show (D (h :*: h') x)
 
 data (h :+: h') f = HLeft (h f) | HRight (h' f)
 
@@ -131,6 +148,7 @@ instance (Differentiable h, Differentiable h') => Differentiable (h :+: h') wher
     fillHole (Loc (DHLeft c) a) = HLeft (fillHole (Loc c a))
     fillHole (Loc (DHRight c) a) = HRight (fillHole (Loc c a))
 
+deriving instance (Show (D h x), Show (D h' x)) => Show (D (h :+: h') x)
 
 {-
 
