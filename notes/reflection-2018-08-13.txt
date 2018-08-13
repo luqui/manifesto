@@ -1,0 +1,42 @@
+The sketch in Grammar.hs today is pretty inspiring.  There is a grammar
+definition hardly bigger than the data types it describes (though no concrete
+syntax is yet expressed), I don't think I could hope for much better.  And by
+happy accident I stumbled on what Context f a became: the S-expression
+representation of a.  
+
+It is fairly trivial to extend this to a navigator which navigates based on the
+S-expression structure -- we have bigger plans though. How will this become an
+editor?  We can rewrite a node in the same way as my little IO demo, but how
+will we, for example, swap two children?  The first bit of nonlocality -- we
+would have to know that their types agree.  This could perhaps be expressed at
+the grammatical level that a swap is possible, and thus statically checked, but
+I fear other types of edits will be impossible to check statically.  We'll need
+some dynamic type information -- that's fine; f can existentially quantify over
+the node with Typeable, or whatever user-provided compatibility representation
+that is appropriate (we could even require edits to be well-typed in the object
+language this way, I think -- why would we want to though?).
+
+The challenge is in the reconstruction functions, which are local.  In the
+expression
+
+  [f [x, y]]
+
+there are holes for x and y (let's ignore f for now), each with a continuation.
+Explicitly, perhaps
+
+  [f [(x, \x' -> [f [x', y]]), 
+      (y, \y' -> [f [x, y']])]]
+
+So it's quite easy to get [f [x, x]] or [f, [y, y]], which are local edits, but
+a swap seems to require two edits in a row.  The question is, how do we locate
+the position of the second edit after the first is made?  I suppose we could
+record the path from the root and re-navigate to the position .. can we?  Is the
+path from the root knowable?  Well we found the value somehow, we should be able
+to find it again.  Assuming the first edit has not disrupted the path!  I don't
+think it will in the case of a noninterfering swap but in general it might.
+
+Something else that comes to mind is that the continuation structure could
+perhaps be adapted to edit the other continuations.  It sounds tricky, but
+maybe it is possible.  I think in principle it is, since the continuations are
+all local; the only things that need to be edited are the ones that do not
+interfere.  I'm getting tired.  Good night.
