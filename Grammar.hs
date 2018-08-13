@@ -18,7 +18,6 @@ import qualified Control.Lens as L
 import Control.Applicative (liftA2, (<|>))
 import Control.Monad ((<=<))
 
-import Data.Functor.Identity
 import Monoidal
 
 -- ... Looks a lot like a bidirectional applicative/alternative.
@@ -100,11 +99,11 @@ data Exp
     | App Exp Exp
     | Var Name
     | Let [Defn] Exp
-    deriving (Show)
+    deriving (Read, Show)
 
 data Defn
     = Defn Name Exp
-    deriving (Show)
+    deriving (Read, Show)
 
 $( L.makePrisms ''Exp )
 $( L.makePrisms ''Defn )
@@ -116,6 +115,14 @@ _Cons :: L.Prism [a] [b] (a,[a]) (b,[b])
 _Cons = L.prism (uncurry (:)) (\case [] -> Left []; (x:xs) -> Right (x,xs))
 
 
+reread :: (Read a, Show a) => a -> IO a
+reread x = do
+    putStrLn $ "Was: " ++ show x
+    putStr "Now? "
+    readLn
+    
+
+
 listg :: (Grammar g) => g a -> g [a]
 listg g = _Nil ≪?≫ unit
       ≪|≫ _Cons ≪?≫ g ≪:≫ listg g
@@ -123,12 +130,20 @@ listg g = _Nil ≪?≫ unit
 nameg :: (Syntax g) => g Name 
 nameg = listg char
 
-expg :: (Syntax g, HoleData g ~ Identity) => g Exp
-expg = focus Identity $
+expg :: (Syntax g, HoleData g ~ IO) => g Exp
+expg = focus reread $
        _Lambda ≪?≫ nameg ≪:≫ expg
    ≪|≫ _App ≪?≫ expg ≪:≫ expg
    ≪|≫ _Var ≪?≫ nameg
    ≪|≫ _Let ≪?≫ listg defng ≪:≫ expg
 
-defng :: (Syntax g, HoleData g ~ Identity) => g Defn
-defng = focus Identity $ _Defn ≪?≫ nameg ≪:≫ expg
+defng :: (Syntax g, HoleData g ~ IO) => g Defn
+defng = focus reread $ _Defn ≪?≫ nameg ≪:≫ expg
+
+
+main :: IO ()
+main = do
+    case runEditor expg (App (Var "foo") (Var "bar")) of
+        Just (Context _ [_, Hole hio foof, _]) ->
+            print . foof =<< hio
+        _ -> putStrLn "Bullshit"
