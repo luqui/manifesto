@@ -15,10 +15,11 @@
 module Grammar where
 
 import qualified Control.Lens as L
-import Monoidal
 import Control.Applicative (liftA2, (<|>))
 import Control.Monad ((<=<))
-import Data.Kind (Constraint)
+
+import Data.Functor.Identity
+import Monoidal
 
 -- ... Looks a lot like a bidirectional applicative/alternative.
 infix 4 ≪?≫
@@ -30,66 +31,66 @@ class (Monoidal g) => Grammar g where
     empty :: g a
 
 class (Grammar g) => Syntax g where
-    type SyContext g :: * -> Constraint
+    type HoleData g :: * -> *
     char :: g Char
-    focus :: (SyContext g a) => g a -> g a
+    focus :: (a -> HoleData g a) -> g a -> g a
 
 
-data Hole c a where
-    Hole :: c b => b -> (b -> a) -> Hole c a
+data Hole f a where
+    Hole :: f b -> (b -> a) -> Hole f a
 
-instance (Show a) => Show (Hole Show a) where
-    show (Hole b _) = "Hole(" ++ show b ++ ")"
+instance Show (Hole f a) where
+    show (Hole _ _) = "Hole(...)"
 
-instance Functor (Hole c) where
+instance Functor (Hole f) where
     fmap f (Hole b c) = Hole b (f . c)
 
-idHole :: (c a) => a -> Hole c a
+idHole :: f a -> Hole f a
 idHole x = Hole x id
 
-instance IsoFunctor (Hole c) where
+instance IsoFunctor (Hole f) where
     isomap = L.mapping
 
-data Context c a = Context a [Hole c a]
+data Context f a = Context a [Hole f a]
 
-deriving instance (Show a) => Show (Context Show a)
+addFocus :: (a -> f a) -> Context f a -> Context f a
+addFocus f (Context x xhs) = Context x (idHole (f x) : xhs)
 
-instance Functor (Context c) where
+deriving instance (Show a) => Show (Context f a)
+
+instance Functor (Context f) where
     fmap f (Context x xhs) = Context (f x) ((map.fmap) f xhs)
 
 $( L.makePrisms ''Context )
 
-instance IsoFunctor (Context c) where
+instance IsoFunctor (Context f) where
     isomap = L.mapping
 
-instance Monoidal (Context c) where
+instance Monoidal (Context f) where
     unit = Context () []
     Context x xhs ≪*≫ Context y yhs
         = Context (x,y) ((fmap.fmap) (,y) xhs ++ (fmap.fmap) (x,) yhs)
 
-addFocus :: (c a) => Context c a -> Context c a 
-addFocus (Context x xhs) = Context x (idHole x : xhs)
-
-newtype Editor c a = Editor { runEditor :: a -> Maybe (Context c a) }
+newtype Editor f a = Editor { runEditor :: a -> Maybe (Context f a) }
 
 $( L.makePrisms ''Editor )
 
-instance IsoFunctor (Editor c) where
+instance IsoFunctor (Editor f) where
     isomap i = _Editor . L.dimapping (L.from i) (L.mapping (isomap i)) . L.from _Editor
 
-instance Monoidal (Editor c) where
+instance Monoidal (Editor f) where
     unit = Editor (\() -> pure unit)
     Editor f ≪*≫ Editor g = Editor $ \(x,y) -> liftA2 (≪*≫) (f x) (g y)
 
-instance Grammar (Editor c) where
+instance Grammar (Editor f) where
     empty = Editor (\_ -> Nothing)
     p ≪?≫ ed = Editor $ (fmap.fmap) (L.review p) . runEditor ed <=< L.preview p
     ed ≪|≫ ed' = Editor $ \x -> runEditor ed x <|> runEditor ed' x
 
-instance Syntax (Editor c) where
-    type SyContext (Editor c) = c
+instance Syntax (Editor f) where
+    type HoleData (Editor f) = f
     char = Editor (\c -> pure (Context c []))
-    focus = Editor . (fmap.fmap) addFocus . runEditor
+    focus p = Editor . (fmap.fmap) (addFocus p) . runEditor
 
 -- Say we have a grammar like this
 type Name = String
@@ -122,12 +123,12 @@ listg g = _Nil ≪?≫ unit
 nameg :: (Syntax g) => g Name 
 nameg = listg char
 
-expg :: (Syntax g, SyContext g Exp, SyContext g Defn) => g Exp
-expg = focus $
+expg :: (Syntax g, HoleData g ~ Identity) => g Exp
+expg = focus Identity $
        _Lambda ≪?≫ nameg ≪:≫ expg
    ≪|≫ _App ≪?≫ expg ≪:≫ expg
    ≪|≫ _Var ≪?≫ nameg
    ≪|≫ _Let ≪?≫ listg defng ≪:≫ expg
 
-defng :: (Syntax g, SyContext g Defn, SyContext g Exp) => g Defn
-defng = focus $ _Defn ≪?≫ nameg ≪:≫ expg
+defng :: (Syntax g, HoleData g ~ Identity) => g Defn
+defng = focus Identity $ _Defn ≪?≫ nameg ≪:≫ expg
