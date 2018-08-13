@@ -8,12 +8,15 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Grammar where
 
 import qualified Control.Lens as L
 import Monoidal
+import Control.Applicative (liftA2, (<|>))
+import Control.Monad ((<=<))
 
 -- ... Looks a lot like a bidirectional applicative/alternative.
 infix 4 ≪?≫
@@ -31,18 +34,47 @@ class (Grammar g) => Syntax g where
 data Hole c a where
     Hole :: c b => b -> (b -> a) -> Hole c a
 
-instance IsoFunctor (Hole c) where
-    isomap i = L.withIso i $ \f f' -> 
-        L.iso (\(Hole b c) -> Hole b (f . c))
-              (\(Hole b c) -> Hole b (f' . c))
+instance Functor (Hole c) where
+    fmap f (Hole b c) = Hole b (f . c)
 
-newtype Context c a = Context [Hole c a]
+extract :: Hole c a -> a
+extract (Hole x f) = f x
+
+instance IsoFunctor (Hole c) where
+    isomap = L.mapping
+
+data Context c a = Context a [Hole c a]
+
+instance Functor (Context c) where
+    fmap f (Context x xhs) = Context (f x) ((map.fmap) f xhs)
+
+$( L.makePrisms ''Context )
 
 instance IsoFunctor (Context c) where
-    isomap i = contextI . L.mapping (isomap i) . L.from contextI
-        where
-        contextI :: L.Iso' (Context c a) [Hole c a]
-        contextI = L.coerced
+    isomap = L.mapping
+
+instance Monoidal (Context c) where
+    unit = Context () []
+    Context x xhs ≪*≫ Context y yhs
+        = Context (x,y) ((fmap.fmap) (,y) xhs ++ (fmap.fmap) (x,) yhs)
+
+
+newtype Editor c a = Editor { runEditor :: a -> Maybe (Context c a) }
+
+$( L.makePrisms ''Editor )
+
+instance IsoFunctor (Editor c) where
+    isomap i = _Editor . L.dimapping (L.from i) (L.mapping (isomap i)) . L.from _Editor
+
+instance Monoidal (Editor c) where
+    unit = Editor (\() -> pure unit)
+    Editor f ≪*≫ Editor g = Editor $ \(x,y) -> liftA2 (≪*≫) (f x) (g y)
+
+instance Grammar (Editor c) where
+    empty = Editor (\_ -> Nothing)
+    p ≪?≫ ed = Editor $ (fmap.fmap) (L.review p) . runEditor ed <=< L.preview p
+    ed ≪|≫ ed' = Editor $ \x -> runEditor ed x <|> runEditor ed' x
+
 
 -- Say we have a grammar like this
 type Name = String
