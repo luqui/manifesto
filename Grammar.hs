@@ -7,6 +7,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -17,6 +18,7 @@ import qualified Control.Lens as L
 import Monoidal
 import Control.Applicative (liftA2, (<|>))
 import Control.Monad ((<=<))
+import Data.Kind (Constraint)
 
 -- ... Looks a lot like a bidirectional applicative/alternative.
 infix 4 ≪?≫
@@ -28,22 +30,29 @@ class (Monoidal g) => Grammar g where
     empty :: g a
 
 class (Grammar g) => Syntax g where
+    type SyContext g :: * -> Constraint
     char :: g Char
+    focus :: (SyContext g a) => g a -> g a
 
 
 data Hole c a where
     Hole :: c b => b -> (b -> a) -> Hole c a
 
+instance (Show a) => Show (Hole Show a) where
+    show (Hole b _) = "Hole(" ++ show b ++ ")"
+
 instance Functor (Hole c) where
     fmap f (Hole b c) = Hole b (f . c)
 
-extract :: Hole c a -> a
-extract (Hole x f) = f x
+idHole :: (c a) => a -> Hole c a
+idHole x = Hole x id
 
 instance IsoFunctor (Hole c) where
     isomap = L.mapping
 
 data Context c a = Context a [Hole c a]
+
+deriving instance (Show a) => Show (Context Show a)
 
 instance Functor (Context c) where
     fmap f (Context x xhs) = Context (f x) ((map.fmap) f xhs)
@@ -58,6 +67,8 @@ instance Monoidal (Context c) where
     Context x xhs ≪*≫ Context y yhs
         = Context (x,y) ((fmap.fmap) (,y) xhs ++ (fmap.fmap) (x,) yhs)
 
+addFocus :: (c a) => Context c a -> Context c a 
+addFocus (Context x xhs) = Context x (idHole x : xhs)
 
 newtype Editor c a = Editor { runEditor :: a -> Maybe (Context c a) }
 
@@ -75,6 +86,10 @@ instance Grammar (Editor c) where
     p ≪?≫ ed = Editor $ (fmap.fmap) (L.review p) . runEditor ed <=< L.preview p
     ed ≪|≫ ed' = Editor $ \x -> runEditor ed x <|> runEditor ed' x
 
+instance Syntax (Editor c) where
+    type SyContext (Editor c) = c
+    char = Editor (\c -> pure (Context c []))
+    focus = Editor . (fmap.fmap) addFocus . runEditor
 
 -- Say we have a grammar like this
 type Name = String
@@ -84,9 +99,11 @@ data Exp
     | App Exp Exp
     | Var Name
     | Let [Defn] Exp
+    deriving (Show)
 
 data Defn
     = Defn Name Exp
+    deriving (Show)
 
 $( L.makePrisms ''Exp )
 $( L.makePrisms ''Defn )
@@ -105,11 +122,12 @@ listg g = _Nil ≪?≫ unit
 nameg :: (Syntax g) => g Name 
 nameg = listg char
 
-expg :: (Syntax g) => g Exp
-expg = _Lambda ≪?≫ nameg ≪:≫ expg
+expg :: (Syntax g, SyContext g Exp, SyContext g Defn) => g Exp
+expg = focus $
+       _Lambda ≪?≫ nameg ≪:≫ expg
    ≪|≫ _App ≪?≫ expg ≪:≫ expg
    ≪|≫ _Var ≪?≫ nameg
    ≪|≫ _Let ≪?≫ listg defng ≪:≫ expg
 
-defng :: (Syntax g) => g Defn
-defng = _Defn ≪?≫ nameg ≪:≫ expg
+defng :: (Syntax g, SyContext g Defn, SyContext g Exp) => g Defn
+defng = focus $ _Defn ≪?≫ nameg ≪:≫ expg
