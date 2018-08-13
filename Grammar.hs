@@ -1,6 +1,7 @@
 {-# OPTIONS -Wall #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -9,11 +10,13 @@
 module Grammar where
 
 import Data.Functor.Identity
-import Control.Lens (Prism', makePrisms)
+import Control.Lens (Prism, prism, Prism', prism', makePrisms)
 
 class HFunctor h where
     hfmap :: (forall x. f x -> g x) -> h f -> h g
 
+-- This does not capture our requirement that a be a product type;
+-- or that Shape a f should include information about all cases.
 class (HFunctor (Shape a)) => Regular a where
     data Shape a :: (* -> *) -> *
 
@@ -29,17 +32,6 @@ instance Regular (a,b) where
 instance HFunctor (Shape (a,b)) where
     hfmap f (Tuple2 (a, b)) = Tuple2 (f a, f b)
 
--- Wrong from our perspective.
--- Regular should define a *covering*, not just an instance
-instance Regular [a] where
-    newtype Shape [a] f
-        = List [f a]
-    toShape xs = List (map Identity xs)
-    fromShape (List xs) = map runIdentity xs
-
-instance HFunctor (Shape [a]) where
-    hfmap f (List xs) = List (map f xs)
-
 -- ... Looks a lot like a bidirectional applicative/alternative.
 infix 4 ≪$≫
 infixr 3 ≪|≫
@@ -49,6 +41,7 @@ class Grammar g where
     (≪|≫) :: g a -> g a -> g a
     (*≫) :: g () -> g a -> g a
     empty :: g a
+    unit :: g ()
     reg :: (Regular a) => Shape a g -> g a
 
 class (Grammar g) => Syntax g where
@@ -67,14 +60,28 @@ data Defn
     = Defn Name Exp
 
 $( makePrisms ''Exp )
+$( makePrisms ''Defn )
 
--- wrong
+_Nil :: Prism' [a] ()
+_Nil = prism' (const []) (\case [] -> Just (); _ -> Nothing)
+
+_Cons :: Prism [a] [b] (a,[a]) (b,[b])
+_Cons = prism (uncurry (:)) (\case [] -> Left []; (x:xs) -> Right (x,xs))
+-- ^ Is the Left case here correct?
+
+
+listg :: (Grammar g) => g a -> g [a]
+listg g = _Nil ≪$≫ unit
+      ≪|≫ _Cons ≪$≫ reg (Tuple2 (g, listg g))
+
 nameg :: (Syntax g) => g Name 
-nameg = reg (List [char])
+nameg = listg char
 
 expg :: (Syntax g) => g Exp
 expg = _Lambda ≪$≫ reg (Tuple2 (nameg, expg))
    ≪|≫ _App ≪$≫ reg (Tuple2 (expg, expg))
    ≪|≫ _Var ≪$≫ nameg
--- ≪|≫ _Let ≪$≫ reg (Tuple2 (defnsg, expg))
+   ≪|≫ _Let ≪$≫ reg (Tuple2 (listg defng, expg))
 
+defng :: (Syntax g) => g Defn
+defng = _Defn ≪$≫ reg (Tuple2 (nameg, expg))
