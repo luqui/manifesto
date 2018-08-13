@@ -7,13 +7,13 @@
 
 module Monoidal where
 
-import Control.Lens (Iso', AnIso', withIso, iso)
+import qualified Control.Lens as L
 
 class IsoFunctor f where
-    isomap :: AnIso' a b -> Iso' (f a) (f b)
+    isomap :: L.Iso' a b -> L.Iso' (f a) (f b)
 
-(≪$≫) :: (IsoFunctor f) => AnIso' a b -> f a -> f b
-i ≪$≫ x = withIso (isomap i) (\f _ -> f x)
+(≪$≫) :: (IsoFunctor f) => L.Iso' a b -> f a -> f b
+i ≪$≫ x = L.withIso (isomap i) (\f _ -> f x)
 
 class (IsoFunctor f) => Monoidal f where
     unit :: f ()
@@ -21,16 +21,16 @@ class (IsoFunctor f) => Monoidal f where
 
 infixr 5 ≪:≫
 (≪:≫) :: forall f t a b. (Monoidal f, TupleCons t a b) => f a -> f b -> f t
-x ≪:≫ ys = withIso (isomap consiso) (\f _ -> f (x ≪*≫ ys))
+x ≪:≫ ys = L.withIso (isomap consiso) (\f _ -> f (x ≪*≫ ys))
 
 class TupleCons t a b | t -> a b where
-    consiso :: Iso' (a, b) t
+    consiso :: L.Iso' (a, b) t
 
 instance TupleCons (a,b) a b where
-    consiso = iso id id
+    consiso = L.iso id id
     
 instance TupleCons (a,b,c) a (b,c) where
-    consiso = iso (\(a,(b,c)) -> (a,b,c)) (\(a,b,c) -> (a,(b,c)))
+    consiso = L.iso (\(a,(b,c)) -> (a,b,c)) (\(a,b,c) -> (a,(b,c)))
 
 instance TupleCons (a,b,c,d) a (b,c,d) where
-    consiso = iso (\(a,(b,c,d)) -> (a,b,c,d)) (\(a,b,c,d) -> (a,(b,c,d)))
+    consiso = L.iso (\(a,(b,c,d)) -> (a,b,c,d)) (\(a,b,c,d) -> (a,(b,c,d)))
