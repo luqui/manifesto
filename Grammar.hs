@@ -1,5 +1,5 @@
 {-# OPTIONS -Wall #-}
-{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -18,6 +18,7 @@ import qualified Control.Lens as L
 import Control.Applicative (liftA2, (<|>))
 import Control.Monad ((<=<))
 
+import Data.Functor.Const
 import Monoidal
 
 -- ... Looks a lot like a bidirectional applicative/alternative.
@@ -35,15 +36,18 @@ class (Grammar g) => Syntax g where
     focus :: (a -> HoleData g a) -> g a -> g a
 
 
-data Context f a = Context a [f a]
+data SExp a = SExp a [SExp a]
+    deriving (Show, Functor)
+
+-- This is interesting!  We flatten everything, but we don't
+-- necessarily have to; Context here could be essentially a
+-- mapping between a proper a and an S-expression
+-- representation thereof.
+data Context f a = Context a [SExp (f a)]
+    deriving (Functor)
 
 addFocus :: (a -> f a) -> Context f a -> Context f a
-addFocus f (Context x xhs) = Context x (f x : xhs)
-
-instance (Functor f) => Functor (Context f) where
-    fmap f (Context x xhs) = Context (f x) ((map.fmap) f xhs)
-
-$( L.makePrisms ''Context )
+addFocus f (Context x xhs) = Context x [SExp (f x) xhs]
 
 instance (Functor f) => IsoFunctor (Context f) where
     isomap = L.mapping
@@ -51,7 +55,7 @@ instance (Functor f) => IsoFunctor (Context f) where
 instance (Functor f) => Monoidal (Context f) where
     unit = Context () []
     Context x xhs ≪*≫ Context y yhs
-        = Context (x,y) ((fmap.fmap) (,y) xhs ++ (fmap.fmap) (x,) yhs)
+        = Context (x,y) ((fmap.fmap.fmap) (,y) xhs ++ (fmap.fmap.fmap) (x,) yhs)
 
 newtype Editor f a = Editor { runEditor :: a -> Maybe (Context f a) }
 
@@ -98,11 +102,10 @@ _Cons :: L.Prism [a] [b] (a,[a]) (b,[b])
 _Cons = L.prism (uncurry (:)) (\case [] -> Left []; (x:xs) -> Right (x,xs))
 
 
-reread :: (Read a, Show a) => a -> IO a
-reread x = do
-    putStrLn $ "Was: " ++ show x
-    putStr "Now? "
-    readLn
+showNode :: (Show a) => a -> Const String a
+showNode = Const . show
+
+
     
 
 
@@ -113,20 +116,18 @@ listg g = _Nil ≪?≫ unit
 nameg :: (Syntax g) => g Name 
 nameg = listg char
 
-expg :: (Syntax g, HoleData g ~ IO) => g Exp
-expg = focus reread $
+expg :: (Syntax g, HoleData g ~ Const String) => g Exp
+expg = focus showNode $
        _Lambda ≪?≫ nameg ≪:≫ expg
    ≪|≫ _App ≪?≫ expg ≪:≫ expg
    ≪|≫ _Var ≪?≫ nameg
    ≪|≫ _Let ≪?≫ listg defng ≪:≫ expg
 
-defng :: (Syntax g, HoleData g ~ IO) => g Defn
-defng = focus reread $ _Defn ≪?≫ nameg ≪:≫ expg
+defng :: (Syntax g, HoleData g ~ Const String) => g Defn
+defng = focus showNode $ _Defn ≪?≫ nameg ≪:≫ expg
 
 
 main :: IO ()
 main = do
-    case runEditor expg (App (Var "foo") (Var "bar")) of
-        Just (Context _ [_, hio, _]) ->
-            print =<< hio
-        _ -> putStrLn "Bullshit"
+    let Just (Context _ sexps) = runEditor expg (App (Var "foo") (Var "bar"))
+    print $ (fmap.fmap) getConst sexps
