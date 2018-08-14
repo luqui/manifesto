@@ -35,6 +35,10 @@ class (Grammar g) => Syntax g where
     char :: g Char
     focus :: (a -> HoleData g a) -> g a -> g a
 
+{-
+data PolySExp a where
+    PolySExp :: (Shape f) => (f Identity -> a) -> f PolySExp -> PolySExp a
+-}
 
 data SExp a = SExp a [SExp a]
     deriving (Show, Functor)
