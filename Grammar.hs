@@ -145,8 +145,12 @@ _Cons = L.prism (uncurry (:)) (\case [] -> Left []; (x:xs) -> Right (x,xs))
 showNode :: (Show a) => Builder (Const String) a -> Builder (Const String) a
 showNode = addFocus (Const . show)
 
+data Ex f where
+    Ex :: f a -> Ex f
 
-data Op f = Op { getString :: forall a. f a -> String }
+data Op h = Op { getString :: forall f. h f -> String
+               , toList :: forall f. h f -> [Ex f]
+               }
 
 data HWriter w a f = HWriter w (f a)
 
@@ -154,13 +158,23 @@ instance HFunctor (HWriter w a) where
     hfmap f (HWriter w x) = HWriter w (f x)
 
 instance HMonoidal Op where
-    hunit = Op (\_ -> "")
-    hprod op op' = Op (\(Product a b) -> getString op a ++ getString op' b)
+    hunit = Op 
+        { getString = \_ -> ""
+        , toList = \_ -> mempty
+        }
+    hprod op op' = Op 
+        { getString = \(Product a b) -> getString op a ++ getString op' b
+        , toList = \(Product a b) -> toList op a <> toList op' b
+        }
 
 logNode :: (Show a) => PolySExp Op a -> PolySExp Op a
 logNode sexp = PolySExp op (\(HWriter _ (Identity a)) -> a) (HWriter (show (extract sexp)) sexp)
     where
-    op = Op { getString = \(HWriter s _) -> s }
+    op = Op 
+        { getString = \(HWriter s _) -> s
+        , toList = \(HWriter _ xs) -> [Ex xs]
+        }
+
 
 
 listg :: (Grammar g) => g a -> g [a]
@@ -184,9 +198,10 @@ defng = focus logNode $ _Defn ≪?≫ nameg ≪:≫ expg
 example :: Exp
 example = App (Var "foo") (Var "bar")
 
-{-
+polySExpToSExp :: PolySExp Op a -> SExp String
+polySExpToSExp (PolySExp op _ children) = 
+    SExp (getString op children) (map (\(Ex c) -> polySExpToSExp c) (toList op children))
+
 main :: IO ()
 main = do
-    let Just (PolySExp op recon children) = runEditor expg (App (Var "foo") (Var "bar"))
-    print $ (fmap.fmap) getConst sexps
--}
+    print $ polySExpToSExp <$> runEditor expg example
