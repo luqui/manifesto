@@ -27,6 +27,15 @@ import Monoidal
 infix 4 ≪?≫
 infixr 3 ≪|≫
 
+class HFunctor h where
+    hfmap :: (forall x. f x -> g x) -> h f -> h g
+
+instance HFunctor (Const b) where
+    hfmap _ (Const x) = Const x
+
+instance (HFunctor f, HFunctor g) => HFunctor (f :*: g) where
+    hfmap f (Product x y) = Product (hfmap f x) (hfmap f y)
+
 class (Monoidal g) => Grammar g where
     (≪?≫) :: L.Prism' a b -> g b -> g a
     (≪|≫) :: g a -> g a -> g a
@@ -38,7 +47,13 @@ class (Grammar g) => Syntax g where
     focus :: (SyntaxF g a -> SyntaxF g a) -> g a -> g a
 
 data PolySExp op a where
-    PolySExp :: op f -> (f Identity -> a) -> f (PolySExp op) -> PolySExp op a
+    PolySExp :: (HFunctor f) => op f -> (f Identity -> a) -> f (PolySExp op) -> PolySExp op a
+
+extract :: PolySExp op a -> a
+extract = runIdentity . go
+    where
+    go :: PolySExp op a -> Identity a
+    go (PolySExp _ recon children) = Identity (recon (hfmap go children))
 
 class HMonoidal op where
     hunit :: op (Const ())
@@ -131,7 +146,21 @@ showNode :: (Show a) => Builder (Const String) a -> Builder (Const String) a
 showNode = addFocus (Const . show)
 
 
-    
+data Op f = Op { getString :: forall a. f a -> String }
+
+data HWriter w a f = HWriter w (f a)
+
+instance HFunctor (HWriter w a) where
+    hfmap f (HWriter w x) = HWriter w (f x)
+
+instance HMonoidal Op where
+    hunit = Op (\_ -> "")
+    hprod op op' = Op (\(Product a b) -> getString op a ++ getString op' b)
+
+logNode :: (Show a) => PolySExp Op a -> PolySExp Op a
+logNode sexp = PolySExp op (\(HWriter _ (Identity a)) -> a) (HWriter (show (extract sexp)) sexp)
+    where
+    op = Op { getString = \(HWriter s _) -> s }
 
 
 listg :: (Grammar g) => g a -> g [a]
@@ -141,18 +170,23 @@ listg g = _Nil ≪?≫ unit
 nameg :: (Syntax g) => g Name 
 nameg = listg char
 
-expg :: (Syntax g, SyntaxF g ~ Builder (Const String)) => g Exp
-expg = focus showNode $
+expg :: (Syntax g, SyntaxF g ~ PolySExp Op) => g Exp
+expg = focus logNode $
        _Lambda ≪?≫ nameg ≪:≫ expg
    ≪|≫ _App ≪?≫ expg ≪:≫ expg
    ≪|≫ _Var ≪?≫ nameg
    ≪|≫ _Let ≪?≫ listg defng ≪:≫ expg
 
-defng :: (Syntax g, SyntaxF g ~ Builder (Const String)) => g Defn
-defng = focus showNode $ _Defn ≪?≫ nameg ≪:≫ expg
+defng :: (Syntax g, SyntaxF g ~ PolySExp Op) => g Defn
+defng = focus logNode $ _Defn ≪?≫ nameg ≪:≫ expg
 
 
+example :: Exp
+example = App (Var "foo") (Var "bar")
+
+{-
 main :: IO ()
 main = do
-    let Just (Builder _ sexps) = runEditor expg (App (Var "foo") (Var "bar"))
+    let Just (PolySExp op recon children) = runEditor expg (App (Var "foo") (Var "bar"))
     print $ (fmap.fmap) getConst sexps
+-}
