@@ -44,24 +44,24 @@ data SExp a = SExp a [SExp a]
     deriving (Show, Functor)
 
 -- This is interesting!  We flatten everything, but we don't
--- necessarily have to; Context here could be essentially a
+-- necessarily have to; Builder here could be essentially a
 -- mapping between a proper a and an S-expression
 -- representation thereof.
-data Context f a = Context a [SExp (f a)]
+data Builder f a = Builder a [SExp (f a)]
     deriving (Functor)
 
-addFocus :: (a -> f a) -> Context f a -> Context f a
-addFocus f (Context x xhs) = Context x [SExp (f x) xhs]
+addFocus :: (a -> f a) -> Builder f a -> Builder f a
+addFocus f (Builder x xhs) = Builder x [SExp (f x) xhs]
 
-instance (Functor f) => IsoFunctor (Context f) where
+instance (Functor f) => IsoFunctor (Builder f) where
     isomap = L.mapping
 
-instance (Functor f) => Monoidal (Context f) where
-    unit = Context () []
-    Context x xhs ≪*≫ Context y yhs
-        = Context (x,y) ((fmap.fmap.fmap) (,y) xhs ++ (fmap.fmap.fmap) (x,) yhs)
+instance (Functor f) => Monoidal (Builder f) where
+    unit = Builder () []
+    Builder x xhs ≪*≫ Builder y yhs
+        = Builder (x,y) ((fmap.fmap.fmap) (,y) xhs ++ (fmap.fmap.fmap) (x,) yhs)
 
-newtype Editor f a = Editor { runEditor :: a -> Maybe (Context f a) }
+newtype Editor f a = Editor { runEditor :: a -> Maybe (Builder f a) }
 
 $( L.makePrisms ''Editor )
 
@@ -79,7 +79,7 @@ instance (Functor f) => Grammar (Editor f) where
 
 instance (Functor f) => Syntax (Editor f) where
     type HoleData (Editor f) = f
-    char = Editor (\c -> pure (Context c []))
+    char = Editor (\c -> pure (Builder c []))
     focus p = Editor . (fmap.fmap) (addFocus p) . runEditor
 
 -- Say we have a grammar like this
@@ -133,5 +133,5 @@ defng = focus showNode $ _Defn ≪?≫ nameg ≪:≫ expg
 
 main :: IO ()
 main = do
-    let Just (Context _ sexps) = runEditor expg (App (Var "foo") (Var "bar"))
+    let Just (Builder _ sexps) = runEditor expg (App (Var "foo") (Var "bar"))
     print $ (fmap.fmap) getConst sexps
