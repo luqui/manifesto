@@ -19,7 +19,6 @@ import qualified Control.Lens as L
 import Control.Applicative (liftA2, (<|>))
 import Control.Monad ((<=<))
 
-import Data.Functor.Identity
 import Data.Functor.Const
 import Monoidal
 
@@ -46,32 +45,6 @@ class (Grammar g) => Syntax g where
     char :: g Char
     focus :: (SyntaxF g a -> SyntaxF g a) -> g a -> g a
 
-data PolySExp op a where
-    PolySExp :: (HFunctor f) => op f -> (f Identity -> a) -> f (PolySExp op) -> PolySExp op a
-
-extract :: PolySExp op a -> a
-extract = runIdentity . go
-    where
-    go :: PolySExp op a -> Identity a
-    go (PolySExp _ recon children) = Identity (recon (hfmap go children))
-
-class HMonoidal op where
-    hunit :: op (Const ())
-    hprod :: op f -> op g -> op (f :*: g)
-
-deriving instance Functor (PolySExp op)
-instance IsoFunctor (PolySExp op)
-instance (HMonoidal op) => Monoidal (PolySExp op) where
-    unit = PolySExp hunit (\(Const ()) -> ()) (Const ())
-    PolySExp op recon children ≪*≫ PolySExp op' recon' children'
-        = PolySExp (hprod op op') 
-                   (\(Product x y) -> (recon x, recon' y)) 
-                   (Product children children')
-
-instance (HMonoidal op) => Applicative (PolySExp op) where
-    pure x = (\() -> x) <$> unit
-    f <*> x = uncurry ($) <$> (f ≪*≫ x)
-
 data SExp a = SExp a [SExp a]
     deriving (Show, Functor)
 
@@ -80,7 +53,7 @@ data SExp a = SExp a [SExp a]
 -- mapping between a proper a and an S-expression
 -- representation thereof.
 data Builder f a = Builder a [SExp (f a)]
-    deriving (Functor)
+    deriving (Functor, Show)
 
 instance (Functor f) => Applicative (Builder f) where
     pure x = (\() -> x) <$> unit
@@ -145,38 +118,6 @@ _Cons = L.prism (uncurry (:)) (\case [] -> Left []; (x:xs) -> Right (x,xs))
 showNode :: (Show a) => Builder (Const String) a -> Builder (Const String) a
 showNode = addFocus (Const . show)
 
-data Ex f where
-    Ex :: f a -> Ex f
-
-data Op h = Op { getString :: forall f. h f -> String
-               , toList :: forall f. h f -> [Ex f]
-               }
-
-data HWriter w a f = HWriter w (f a)
-
-instance HFunctor (HWriter w a) where
-    hfmap f (HWriter w x) = HWriter w (f x)
-
-instance HMonoidal Op where
-    hunit = Op 
-        { getString = \_ -> ""
-        , toList = \_ -> mempty
-        }
-    hprod op op' = Op 
-        { getString = \(Product a b) -> getString op a ++ getString op' b
-        , toList = \(Product a b) -> toList op a <> toList op' b
-        }
-
-logNode :: (Show a) => PolySExp Op a -> PolySExp Op a
-logNode sexp = PolySExp op (\(HWriter _ (Identity a)) -> a) (HWriter (show (extract sexp)) sexp)
-    where
-    op = Op 
-        { getString = \(HWriter s _) -> s
-        , toList = \(HWriter _ xs) -> [Ex xs]
-        }
-
-
-
 listg :: (Grammar g) => g a -> g [a]
 listg g = _Nil ≪?≫ unit
       ≪|≫ _Cons ≪?≫ g ≪:≫ listg g
@@ -184,24 +125,20 @@ listg g = _Nil ≪?≫ unit
 nameg :: (Syntax g) => g Name 
 nameg = listg char
 
-expg :: (Syntax g, SyntaxF g ~ PolySExp Op) => g Exp
-expg = focus logNode $
+expg :: (Syntax g, SyntaxF g ~ Builder (Const String)) => g Exp
+expg = focus showNode $
        _Lambda ≪?≫ nameg ≪:≫ expg
    ≪|≫ _App ≪?≫ expg ≪:≫ expg
    ≪|≫ _Var ≪?≫ nameg
    ≪|≫ _Let ≪?≫ listg defng ≪:≫ expg
 
-defng :: (Syntax g, SyntaxF g ~ PolySExp Op) => g Defn
-defng = focus logNode $ _Defn ≪?≫ nameg ≪:≫ expg
+defng :: (Syntax g, SyntaxF g ~ Builder (Const String)) => g Defn
+defng = focus showNode $ _Defn ≪?≫ nameg ≪:≫ expg
 
 
 example :: Exp
 example = App (Var "foo") (Var "bar")
 
-polySExpToSExp :: PolySExp Op a -> SExp String
-polySExpToSExp (PolySExp op _ children) = 
-    SExp (getString op children) (map (\(Ex c) -> polySExpToSExp c) (toList op children))
-
 main :: IO ()
 main = do
-    print $ polySExpToSExp <$> runEditor expg example
+    print $ runEditor expg example
