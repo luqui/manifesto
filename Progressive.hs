@@ -25,3 +25,9 @@ step x xs = Progressive (Step x (Compose xs))
 runStep :: Progressive m a -> (a, Maybe (m (Progressive m a)))
 runStep (Progressive (Step x (Compose xs))) = (x, Just xs)
 runStep (Progressive (Done x)) = (x, Nothing)
+
+-- Put one progressive computation at the end of another.
+affix :: (Functor m) => (a -> Progressive m a) -> Progressive m a -> Progressive m a
+affix f (Progressive (Done x)) = f x
+affix f (Progressive (Step x (Compose mxs))) = Progressive (Step x (Compose (affix f <$> mxs)))
+
