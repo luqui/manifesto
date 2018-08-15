@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module Interactive where
+module Progressive where
 
 import Data.Functor.Compose
 
@@ -16,12 +16,12 @@ instance (Applicative f) => Applicative (Step f) where
     fs <*> Done x = ($ x) <$> fs
     Step f fs <*> Step x xs = Step (f x) (fs <*> xs)
 
-newtype Interactive m a = Interactive { runInteractive :: Step (Compose m (Interactive m)) a }
+newtype Progressive m a = Progressive { runProgressive :: Step (Compose m (Progressive m)) a }
     deriving (Functor, Applicative)
 
-step :: a -> m (Interactive m a) -> Interactive m a
-step x xs = Interactive (Step x (Compose xs))
+step :: a -> m (Progressive m a) -> Progressive m a
+step x xs = Progressive (Step x (Compose xs))
 
-runStep :: Interactive m a -> (a, Maybe (m (Interactive m a)))
-runStep (Interactive (Step x (Compose xs))) = (x, Just xs)
-runStep (Interactive (Done x)) = (x, Nothing)
+runStep :: Progressive m a -> (a, Maybe (m (Progressive m a)))
+runStep (Progressive (Step x (Compose xs))) = (x, Just xs)
+runStep (Progressive (Done x)) = (x, Nothing)
