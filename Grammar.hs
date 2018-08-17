@@ -16,8 +16,12 @@
 module Grammar where
 
 import qualified Control.Lens as L
+import qualified Data.Text.Prettyprint.Doc as PP
 import Control.Applicative (liftA2, (<|>))
-import Control.Monad ((<=<))
+import Control.Comonad (Comonad(..))
+import Control.Comonad.Cofree (Cofree(..))
+import Control.Monad ((<=<), join)
+import Data.Monoid (Monoid(..), First(..))
 
 import Data.Functor.Const
 import Monoidal
@@ -45,6 +49,9 @@ class (Grammar g) => Syntax g where
     char :: g Char
     focus :: (SyntaxF g a -> SyntaxF g a) -> g a -> g a
 
+
+----------------- S expression builder -----------------
+
 data SExp a = SExp a [SExp a]
     deriving (Show, Functor)
 
@@ -59,7 +66,6 @@ instance (Functor f) => Applicative (Builder f) where
     pure x = (\() -> x) <$> unit
     f <*> x = uncurry ($) <$> (f ≪*≫ x)
 
-
 addFocus :: (a -> f a) -> Builder f a -> Builder f a
 addFocus f (Builder x xhs) = Builder x [SExp (f x) xhs]
 
@@ -69,6 +75,70 @@ instance (Functor f) => Monoidal (Builder f) where
     unit = Builder () []
     Builder x xhs ≪*≫ Builder y yhs
         = Builder (x,y) ((fmap.fmap.fmap) (,y) xhs ++ (fmap.fmap.fmap) (x,) yhs)
+
+
+------------------- tangible values --------------------------
+
+data View v a = View v a
+    deriving (Functor)
+
+vConsWith :: (TupleCons t a b) => (v -> v' -> v'') -> View v a -> View v' b -> View v'' t
+vConsWith f (View v x) (View v' x') = View (f v v') (L.view consiso (x,x'))
+
+(<+>) :: (TupleCons t a b) => View (PP.Doc s) a -> View (PP.Doc s) b -> View (PP.Doc s) t
+(<+>) = vConsWith (PP.<+>)
+
+------------------- interactive editor -----------------------
+
+
+data Input = ILeft | IRight | IUp | IDown | IChar Char
+    deriving (Show)
+
+newtype InputF a = InputF { runInputF :: Input -> First a }
+    deriving (Functor, Semigroup, Monoid)
+
+newtype Nav a = Nav { runNav :: Cofree InputF a }
+    deriving (Functor)
+
+cat :: (Monoid m) => Nav m -> Nav m -> Nav m
+cat m n = uncurry (<>) <$> adjacent m n
+
+adjacent :: Nav a -> Nav b -> Nav (a,b)
+adjacent = \(Nav n) (Nav n') -> Nav (leftCont n n')
+    where
+    leftCont (x :< xi) ys = (x, extract ys) :< 
+        ((\xs -> leftCont xs ys) <$> xi) <> InputF (\case
+            IRight -> pure (rightCont (x :< xi) ys)
+            _ -> mempty)
+    rightCont xs (y :< yi) = (extract xs, y) :< 
+        ((\ys -> rightCont xs ys) <$> yi) <> InputF (\case
+            ILeft -> pure (leftCont xs (y :< yi))
+            _ -> mempty)
+
+string :: String -> Nav String
+string s = Nav $ s :< InputF (\case
+    IChar c -> pure (runNav (string (s ++ [c])))
+    _ -> mempty)
+       
+
+simNav :: (Show a) => Nav a -> IO ()
+simNav = go . runNav
+    where
+    go (x :< xs) = do
+        print x
+        line <- getLine
+        let inp = case line of
+                    "left" -> Just ILeft
+                    "right" -> Just IRight
+                    "up" -> Just IUp
+                    "down" -> Just IDown
+                    [c] -> Just (IChar c)
+                    _ -> Nothing
+        maybe (putStrLn "no" >> go (x :< xs)) go $ join (getFirst . runInputF xs <$> inp) 
+
+
+------------------- destructuring traversal -------------------
+
 
 newtype Editor f a = Editor { runEditor :: a -> Maybe (f a) }
 
