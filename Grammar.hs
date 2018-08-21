@@ -7,6 +7,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
@@ -47,6 +48,7 @@ class (Monoidal g) => Grammar g where
 class (Grammar g) => Syntax g where
     type SyntaxF g :: * -> *
     char :: g Char
+    symbol :: String -> g ()
     focus :: (SyntaxF g a -> SyntaxF g a) -> g a -> g a
 
 
@@ -211,7 +213,9 @@ instance (Applicative f) => Grammar (Editor f) where
 instance (Applicative f) => Syntax (Editor f) where
     type SyntaxF (Editor f) = f
     char = Editor (\c -> pure (pure c))
+    symbol _ = unit
     focus p = Editor . (fmap.fmap) p . runEditor
+
 
 -- Say we have a grammar like this
 type Name = String
@@ -247,15 +251,39 @@ listg g = _Nil ≪?≫ unit
 nameg :: (Syntax g) => g Name 
 nameg = listg char
 
+optional :: (Grammar g) => g a -> g (Maybe a)
+optional g = L._Just ≪?≫ g 
+         ≪|≫ L._Nothing ≪?≫ unit
+
+chainl1 :: forall g a. (Grammar g) => g () -> L.Prism' a (a,a) -> g a -> g a
+chainl1 delim prism term = munge ≪$≫ (term ≪*≫ (delim *≫ optional (chainl1 delim prism term)))
+    where
+    munge :: L.Iso' (a, Maybe a) a
+    munge = L.iso (\(x,my) -> maybe x (L.review prism . (x,)) my)
+                  (either (,Nothing) (\(x,y) -> (x,Just y)) . L.matching prism)
+
+parens :: (Syntax g) => g a -> g a
+parens g = symbol "(" *≫ g ≪* symbol ")"
+
+(*≫) :: (Grammar g) => g () -> g a -> g a
+s *≫ a = L.iso (\((), x) -> x) ((),) ≪$≫ (s ≪*≫ a)
+
+(≪*) :: (Grammar g) => g a -> g () -> g a
+a ≪* s = L.iso (\(x, ()) -> x) (,()) ≪$≫ (a ≪*≫ s)
+
+
 expg :: (Syntax g, SyntaxF g ~ Builder (Const String)) => g Exp
 expg = focus showNode $
-       _Lambda ≪?≫ nameg ≪:≫ expg
-   ≪|≫ _App ≪?≫ expg ≪:≫ expg
-   ≪|≫ _Var ≪?≫ nameg
-   ≪|≫ _Let ≪?≫ listg defng ≪:≫ expg
+       _Lambda ≪?≫ (symbol "\\" *≫ nameg ≪* symbol ".")  ≪:≫ expg
+   ≪|≫ _Let ≪?≫ (symbol "let" *≫ listg defng ≪* symbol "in") ≪:≫ expg
+   ≪|≫ chainl1 (symbol " ") _App termg
+
+termg :: (Syntax g, SyntaxF g ~ Builder (Const String)) => g Exp
+termg = _Var ≪?≫ nameg
+    ≪|≫ parens expg
 
 defng :: (Syntax g, SyntaxF g ~ Builder (Const String)) => g Defn
-defng = focus showNode $ _Defn ≪?≫ nameg ≪:≫ expg
+defng = focus showNode $ _Defn ≪?≫ (nameg ≪* symbol "=") ≪:≫ expg
 
 
 example :: Exp
