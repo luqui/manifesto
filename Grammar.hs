@@ -130,6 +130,30 @@ adjacent = \(Nav n) (Nav n') -> Nav (leftCont n n')
             ILeft -> pure (leftCont xs (y :< yi))
             _ -> mempty)
 
+-- Ok, so we're perhaps ultimately trying to build a `Nav (Zipper a)` -- a way
+-- to navigate around a's with context.  adjacent returns a partial derivative,
+-- then we use combinators to reassociate as necessary.  In adjacent, a might
+-- itself be a zipper, but adjacent needn't know that; however we should be
+-- able to massage Loc (PDPair (Zipper a) (Zipper b)) into Zipper (a,b) 
+-- (perhaps, though using Zipper twice on the left is suspect, seems more like
+-- Zipper should be applied like liebniz.  Is it?)
+
+-- Loc (f * g) 
+--   =? Loc f * g + f * Loc g
+-- 
+-- ^ This doesn't make sense.  Loc (f * g) is a type, but f and g are functors.
+-- Perhaps there is hope of a liebniz rule in the non-existential variant:
+--
+-- Z (f * g) a
+--   = a * D (f * g) a
+--   = a * (D f * g + f * D g) a
+--   = a * (D f a * g a + f a * D g a)
+--   = a * D f a * g a + a * f a * D g a
+--   = (a * D f a * g a) + (f a * a * Z g a)
+--   = (Z f * g) a + (f * Z g) a
+--
+-- Yep!  But now we require a monotyped focus, right?
+
 withFocus :: Focused -> Focus a -> Focus a
 withFocus foc x = x . (foc <>)
 
