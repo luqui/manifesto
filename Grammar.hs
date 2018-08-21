@@ -97,11 +97,8 @@ data Input = ILeft | IRight | IUp | IDown | IChar Char
 newtype InputF a = InputF { runInputF :: Input -> First a }
     deriving (Functor, Semigroup, Monoid)
 
-newtype Nav a = Nav { runNav :: Cofree InputF (Focus a) }
+newtype Nav a = Nav { runNav :: Cofree InputF a }
     deriving (Functor)
-
-cat :: (Semigroup m) => Nav m -> Nav m -> Nav m
-cat m n = uncurry (<>) <$> adjacent m n
 
 data Focused = Focused | Unfocused
     deriving (Eq,Ord,Show)
@@ -115,19 +112,35 @@ instance Monoid Focused where
 
 type Focus = (->) Focused
 
-adjacent :: Nav a -> Nav b -> Nav (a, b)
+data PDPair a b x where
+    PDLeft :: b -> PDPair a b a
+    PDRight :: a -> PDPair a b b
+
+data Loc p = forall a. Loc (p a) a 
+
+adjacent :: Nav a -> Nav b -> Nav (Loc (PDPair a b))
 adjacent = \(Nav n) (Nav n') -> Nav (leftCont n n')
     where
-    leftCont (x :< xi) ys = (\foc -> (x (foc <> Focused), extract ys (foc <> Unfocused))) :< 
+    leftCont (x :< xi) ys = Loc (PDLeft (extract ys)) x :< 
         ((\xs -> leftCont xs ys) <$> xi) <> InputF (\case
             IRight -> pure (rightCont (x :< xi) ys)
             _ -> mempty)
-    rightCont xs (y :< yi) = (\foc -> (extract xs (foc <> Unfocused), y (foc <> Focused))) :< 
+    rightCont xs (y :< yi) = Loc (PDRight (extract xs)) y :< 
         ((\ys -> rightCont xs ys) <$> yi) <> InputF (\case
             ILeft -> pure (leftCont xs (y :< yi))
             _ -> mempty)
 
-string :: String -> Nav String
+withFocus :: Focused -> Focus a -> Focus a
+withFocus foc x = x . (foc <>)
+
+refocus :: Loc (PDPair (Focus a) (Focus b)) -> (Focus a, Focus b)
+refocus (Loc (PDLeft b) a) = (withFocus Focused a, withFocus Unfocused b)
+refocus (Loc (PDRight a) b) = (withFocus Unfocused a, withFocus Focused b)
+
+cat :: (Semigroup m) => Nav (Focus m) -> Nav (Focus m) -> Nav (Focus m)
+cat m n = uncurry (<>) . refocus <$> adjacent m n
+
+string :: String -> Nav (Focus String)
 string s = Nav $ render :< InputF (\case
     IChar c -> pure (runNav (string (s ++ [c])))
     _ -> mempty)
@@ -136,7 +149,7 @@ string s = Nav $ render :< InputF (\case
     render Focused = "{" ++ s ++ "}"
        
 
-simNav :: (Show a) => Nav a -> IO ()
+simNav :: (Show a) => Nav (Focus a) -> IO ()
 simNav = go . runNav
     where
     go (x :< xs) = do
