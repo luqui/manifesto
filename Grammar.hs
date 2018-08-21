@@ -110,7 +110,7 @@ instance Semigroup Focused where
 instance Monoid Focused where
     mempty = Focused  -- seems strange, but it's indeed the unit of <>
 
-type Focus = (->) Focused
+type Focusable = (->) Focused
 
 data PDPair a b x where
     PDLeft :: b -> PDPair a b a
@@ -154,17 +154,17 @@ adjacent = \(Nav n) (Nav n') -> Nav (leftCont n n')
 --
 -- Yep!  But now we require a monotyped focus, right?
 
-withFocus :: Focused -> Focus a -> Focus a
+withFocus :: Focused -> Focusable a -> Focusable a
 withFocus foc x = x . (foc <>)
 
-refocus :: Loc (PDPair (Focus a) (Focus b)) -> (Focus a, Focus b)
+refocus :: Loc (PDPair (Focusable a) (Focusable b)) -> (Focusable a, Focusable b)
 refocus (Loc (PDLeft b) a) = (withFocus Focused a, withFocus Unfocused b)
 refocus (Loc (PDRight a) b) = (withFocus Unfocused a, withFocus Focused b)
 
-cat :: (Semigroup m) => Nav (Focus m) -> Nav (Focus m) -> Nav (Focus m)
+cat :: (Semigroup m) => Nav (Focusable m) -> Nav (Focusable m) -> Nav (Focusable m)
 cat m n = uncurry (<>) . refocus <$> adjacent m n
 
-string :: String -> Nav (Focus String)
+string :: String -> Nav (Focusable String)
 string s = Nav $ render :< InputF (\case
     IChar c -> pure (runNav (string (s ++ [c])))
     _ -> mempty)
@@ -173,7 +173,7 @@ string s = Nav $ render :< InputF (\case
     render Focused = "{" ++ s ++ "}"
        
 
-simNav :: (Show a) => Nav (Focus a) -> IO ()
+simNav :: (Show a) => Nav (Focusable a) -> IO ()
 simNav = go . runNav
     where
     go (x :< xs) = do
