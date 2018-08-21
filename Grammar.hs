@@ -97,35 +97,50 @@ data Input = ILeft | IRight | IUp | IDown | IChar Char
 newtype InputF a = InputF { runInputF :: Input -> First a }
     deriving (Functor, Semigroup, Monoid)
 
-newtype Nav a = Nav { runNav :: Cofree InputF a }
+newtype Nav a = Nav { runNav :: Cofree InputF (Focus a) }
     deriving (Functor)
 
-cat :: (Monoid m) => Nav m -> Nav m -> Nav m
+cat :: (Semigroup m) => Nav m -> Nav m -> Nav m
 cat m n = uncurry (<>) <$> adjacent m n
 
-adjacent :: Nav a -> Nav b -> Nav (a,b)
+data Focused = Focused | Unfocused
+    deriving (Eq,Ord,Show)
+
+instance Semigroup Focused where
+    Focused <> Focused = Focused
+    _ <> _ = Unfocused
+
+instance Monoid Focused where
+    mempty = Focused  -- seems strange, but it's indeed the unit of <>
+
+type Focus = (->) Focused
+
+adjacent :: Nav a -> Nav b -> Nav (a, b)
 adjacent = \(Nav n) (Nav n') -> Nav (leftCont n n')
     where
-    leftCont (x :< xi) ys = (x, extract ys) :< 
+    leftCont (x :< xi) ys = (\foc -> (x (foc <> Focused), extract ys (foc <> Unfocused))) :< 
         ((\xs -> leftCont xs ys) <$> xi) <> InputF (\case
             IRight -> pure (rightCont (x :< xi) ys)
             _ -> mempty)
-    rightCont xs (y :< yi) = (extract xs, y) :< 
+    rightCont xs (y :< yi) = (\foc -> (extract xs (foc <> Unfocused), y (foc <> Focused))) :< 
         ((\ys -> rightCont xs ys) <$> yi) <> InputF (\case
             ILeft -> pure (leftCont xs (y :< yi))
             _ -> mempty)
 
 string :: String -> Nav String
-string s = Nav $ s :< InputF (\case
+string s = Nav $ render :< InputF (\case
     IChar c -> pure (runNav (string (s ++ [c])))
     _ -> mempty)
+    where
+    render Unfocused = s
+    render Focused = "{" ++ s ++ "}"
        
 
 simNav :: (Show a) => Nav a -> IO ()
 simNav = go . runNav
     where
     go (x :< xs) = do
-        print x
+        print (x Focused)
         line <- getLine
         let inp = case line of
                     "left" -> Just ILeft
