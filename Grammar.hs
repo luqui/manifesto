@@ -134,7 +134,10 @@ instance (Nav.NavInput i) => Grammar (Editor i attr) where
 instance (Nav.NavInput i) => Syntax (Editor i attr) where
     char = Editor (\c -> pure (pure (View (PP.pretty c) c)))
     symbol s = Editor (\u -> pure (pure (View (PP.pretty s) u)))
-    focus = id
+    focus e = Editor (\a -> Nav.levelFocNav docFoc <$> runEditor e a)
+        where
+        docFoc :: View (PP.Doc attr) a -> View (PP.Doc attr) a
+        docFoc (View v a) = View (PP.pretty "{" <> v <> PP.pretty "}") a
 
 
 _Nil :: L.Prism' [a] ()

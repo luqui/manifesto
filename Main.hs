@@ -52,13 +52,15 @@ example3 :: Exp
 example3 = Lambda "f" (App (Lambda "x" (App (Var "f") (App (Var "x") (Var "x"))))
                            (Lambda "x" (App (Var "f") (App (Var "x") (Var "x")))))
 
-data Input = ILeft | IRight | IChar Char
+data Input = ILeft | IRight | IUp | IDown | IChar Char
 
 $( L.makePrisms ''Input )
 
 instance Nav.NavInput Input where
     _ILeft = _ILeft
     _IRight = _IRight
+    _IUp = _IUp
+    _IDown = _IDown
     _IChar = _IChar
 
 main :: IO ()

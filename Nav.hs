@@ -17,8 +17,7 @@ import Control.Monad (join)
 import Control.Applicative (Alternative(..), liftA2)
 
 class NavInput i where
-    _ILeft :: L.Prism' i ()
-    _IRight :: L.Prism' i ()
+    _ILeft, _IRight, _IUp, _IDown :: L.Prism' i ()
     _IChar :: L.Prism' i Char
 
 pattern ILeft :: (NavInput i) => i
@@ -28,6 +27,14 @@ pattern ILeft <- (L.matching _ILeft -> Right ()) where
 pattern IRight :: (NavInput i) => i
 pattern IRight <- (L.matching _IRight -> Right ()) where
     IRight = L.review _IRight ()
+
+pattern IUp :: (NavInput i) => i
+pattern IUp <- (L.matching _IUp -> Right ()) where
+    IUp = L.review _IUp ()
+
+pattern IDown :: (NavInput i) => i
+pattern IDown <- (L.matching _IDown -> Right ()) where
+    IDown = L.review _IDown ()
 
 pattern IChar :: (NavInput i) => Char -> i
 pattern IChar c <- (L.matching _IChar -> Right c) where
@@ -51,11 +58,8 @@ newtype FocNav i a = FocNav { runFocNav :: Nav i (Focusable a) }
     deriving (Functor)
 
 instance (NavInput i) => Applicative (FocNav i) where
-    pure = FocNav . Nav . repeatCofree . pure
+    pure = FocNav . Nav . pure . pure
     FocNav f <*> FocNav x = FocNav $ uncurry (<*>) . distribFocus <$> adjacent f x
-
-repeatCofree :: (Applicative f) => a -> Cofree f a
-repeatCofree x = let r = x :< pure r in r
 
 data PDPair a b x where
     PDLeft :: b -> PDPair a b a
@@ -64,8 +68,13 @@ data PDPair a b x where
 data Loc p = forall a. Loc (p a) a 
 
 -- Loc (PDPair a b) is isomorphic to (Bool, a, b), where the bool indicates
--- which one is in focus.  But this way is hinting at a deeper  level of
+-- which one is in focus.  But this way is hinting at a deeper level of
 -- abstraction that I might find someday.
+--
+-- There is a problem here, and that is that it puts the focus on subtrees
+-- without any `level`s.  E.g. We might focus on a trivial unit which has
+-- no syntactic information.  What we want is to concatenate the collection
+-- of holes using this logic, not the trees themselves.
 adjacent :: (NavInput i) => Nav i a -> Nav i b -> Nav i (Loc (PDPair a b))
 adjacent = \(Nav n) (Nav n') -> Nav (leftCont n n')
     where
@@ -78,6 +87,27 @@ adjacent = \(Nav n) (Nav n') -> Nav (leftCont n n')
             ILeft -> pure (leftCont xs (y :< yi))
             _ -> mempty)
 
+data PDLevel a x where
+    PDOutside :: PDLevel a a
+    PDInside  :: PDLevel a a
+
+level :: (NavInput i) => Nav i a -> Nav i (Loc (PDLevel a))
+level (Nav n) = Nav (outsideCont n)
+    where
+    outsideCont (x :< xi) = Loc PDOutside x :< InputF (\case
+        IDown -> pure (insideCont (x :< xi))
+        _ -> mempty)
+    insideCont (x :< xi) = Loc PDInside x :< (insideCont <$> xi) <> InputF (\case
+        IUp -> pure (outsideCont (x :< xi))
+        _ -> mempty)
+
+levelFocus :: (a -> a) -> Loc (PDLevel (Focusable a)) -> Focusable a
+levelFocus inFocus (Loc PDOutside x) Focused = inFocus (x Unfocused)
+levelFocus _ (Loc PDOutside x) Unfocused = x Unfocused
+levelFocus _ (Loc PDInside x) foc = x foc
+
+levelFocNav :: (NavInput i) => (a -> a) -> FocNav i a -> FocNav i a
+levelFocNav inFocus (FocNav n) = FocNav $ levelFocus inFocus <$> level n
 
 data Focused = Focused | Unfocused
     deriving (Eq,Ord,Show)
@@ -120,6 +150,8 @@ simNav = go . runNav
         let inp = case line of
                     "left" -> Just ILeft
                     "right" -> Just IRight
+                    "up" -> Just IUp
+                    "down" -> Just IDown
                     [c] -> Just (IChar c)
                     _ -> Nothing
         maybe (putStrLn "no" >> go (x :< xs)) go $ join (getFirst . runInputF xs <$> inp) 
