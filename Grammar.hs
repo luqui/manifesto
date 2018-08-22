@@ -217,23 +217,6 @@ instance Syntax (Editor (Const String)) where
 
 
 
--- Say we have a grammar like this
-type Name = String
-
-data Exp
-    = Lambda Name Exp
-    | App Exp Exp
-    | Var Name
-    | Let [Defn] Exp
-    deriving (Read, Show)
-
-data Defn
-    = Defn Name Exp
-    deriving (Read, Show)
-
-$( L.makePrisms ''Exp )
-$( L.makePrisms ''Defn )
-
 _Nil :: L.Prism' [a] ()
 _Nil = L.prism' (const []) (\case [] -> Just (); _ -> Nothing)
 
@@ -247,9 +230,6 @@ showNode = addFocus (Const . show)
 listg :: (Grammar g) => g a -> g [a]
 listg g = _Nil ≪?≫ unit
       ≪|≫ _Cons ≪?≫ g ≪:≫ listg g
-
-nameg :: (Syntax g) => g Name 
-nameg = listg char
 
 optional :: (Grammar g) => g a -> g (Maybe a)
 optional g = L._Just ≪?≫ g 
@@ -309,30 +289,3 @@ s *≫ a = L.iso (\((), x) -> x) ((),) ≪$≫ (s ≪*≫ a)
 a ≪* s = L.iso (\(x, ()) -> x) (,()) ≪$≫ (a ≪*≫ s)
 
 
-expg :: (Syntax g) => g Exp
-expg = focus $
-       _Lambda ≪?≫ (symbol "\\" *≫ nameg ≪* symbol ".")  ≪:≫ expg
-   ≪|≫ _Let ≪?≫ (symbol "let" *≫ listg defng ≪* symbol "in") ≪:≫ expg
-   ≪|≫ chainl1 (symbol " ") _App termg
-
-termg :: (Syntax g) => g Exp
-termg = _Var ≪?≫ nameg
-    ≪|≫ parens expg
-
-defng :: (Syntax g) => g Defn
-defng = focus $ _Defn ≪?≫ (nameg ≪* symbol "=") ≪:≫ expg
-
-
-example :: Exp
-example = App (Var "foo") (Var "bar")
-
-example2 :: Exp
-example2 = Lambda "f" (Let [Defn "r" (App (Var "f") (Var "r"))] (Var "r"))
-
-example3 :: Exp
-example3 = Lambda "f" (App (Lambda "x" (App (Var "f") (App (Var "x") (Var "x"))))
-                           (Lambda "x" (App (Var "f") (App (Var "x") (Var "x")))))
-
-main :: IO ()
-main = do
-    print (runEditor expg example3 :: Maybe (Const String Exp))
