@@ -2,3 +2,7 @@ Typed holes / agda-style interactive type-driven programming
 Semantic find/replace
 Alpha & beta reduce & expand
 
+
+One interesting use case is to open the editor on the type/theorem, so that
+valid manipulations can be performed on it in a user-friendly way, and as a side
+effect a proof term is generated.
