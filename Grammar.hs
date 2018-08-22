@@ -22,6 +22,7 @@ import Control.Applicative (liftA2, (<|>))
 import Control.Comonad (Comonad(..))
 import Control.Comonad.Cofree (Cofree(..))
 import Control.Monad ((<=<), join)
+import Data.Bifunctor (first)
 import Data.Monoid (Monoid(..), First(..))
 
 import Data.Functor.Const
@@ -46,10 +47,9 @@ class (Monoidal g) => Grammar g where
     empty :: g a
 
 class (Grammar g) => Syntax g where
-    type SyntaxF g :: * -> *
     char :: g Char
     symbol :: String -> g ()
-    focus :: (SyntaxF g a -> SyntaxF g a) -> g a -> g a
+    focus :: g a -> g a
 
 
 ----------------- S expression builder -----------------
@@ -210,11 +210,11 @@ instance (Applicative f) => Grammar (Editor f) where
     p ≪?≫ ed = Editor $ (fmap.fmap) (L.review p) . runEditor ed <=< L.preview p
     ed ≪|≫ ed' = Editor $ \x -> runEditor ed x <|> runEditor ed' x
 
-instance (Applicative f) => Syntax (Editor f) where
-    type SyntaxF (Editor f) = f
-    char = Editor (\c -> pure (pure c))
-    symbol _ = unit
-    focus p = Editor . (fmap.fmap) p . runEditor
+instance Syntax (Editor (Const String)) where
+    char = Editor (\c -> Just (Const [c]))
+    symbol s = Editor (\_ -> Just (Const s))
+    focus = id -- Editor . (fmap.fmap.first) (\s -> "{" ++ s ++ "}") . runEditor
+
 
 
 -- Say we have a grammar like this
@@ -255,8 +255,45 @@ optional :: (Grammar g) => g a -> g (Maybe a)
 optional g = L._Just ≪?≫ g 
          ≪|≫ L._Nothing ≪?≫ unit
 
-chainl1 :: forall g a. (Grammar g) => g () -> L.Prism' a (a,a) -> g a -> g a
-chainl1 delim prism term = munge ≪$≫ (term ≪*≫ (delim *≫ optional (chainl1 delim prism term)))
+
+many :: (Grammar g) => g a -> g [a]
+many g = _Cons ≪?≫ (g ≪*≫ many g)
+     ≪|≫ _Nil ≪?≫ unit
+
+manyDelim1 :: (Grammar g) => g () -> g a -> g (a,[a])
+manyDelim1 delim g = g ≪*≫ many (delim *≫ g)
+
+foldrP :: L.Prism' b (a,b) -> L.Iso' b ([a],b)
+foldrP p = L.iso (unfoldr (L.matching p)) 
+                 (\(xs,b) -> foldr (curry (L.review p)) b xs)
+                 
+    where
+    unfoldr :: (b -> Either b (a,b)) -> b -> ([a],b)
+    unfoldr f b = 
+        case f b of
+            Left b' -> ([],b')
+            Right (x,b') -> first (x:) (unfoldr f b')
+
+foldlP :: L.Prism' b (b,a) -> L.Iso' b ([a],b)
+foldlP p = foldrP (p . swapI) . firstI reverseI
+    where
+    reverseI :: L.Iso' [a] [a]
+    reverseI = L.iso reverse reverse
+
+    firstI :: L.Iso' a b -> L.Iso' (a,c) (b,c)
+    firstI i = L.iso (\(a,c) -> (L.view i a, c))
+                     (\(b,c) -> (L.review i b, c))
+
+chainl1 :: (Grammar g) => g () -> L.Prism' a (a,a) -> g a -> g a
+chainl1 delim prism term = L.from (foldlP prism) ≪$≫ (swapI ≪$≫ manyDelim1 delim term)
+
+swapI :: L.Iso' (a,b) (b,a)
+swapI = L.iso swap swap
+    where
+    swap (x,y) = (y,x)
+
+chainr1 :: forall g a. (Grammar g) => g () -> L.Prism' a (a,a) -> g a -> g a
+chainr1 delim prism term = munge ≪$≫ (term ≪*≫ (delim *≫ optional (chainl1 delim prism term)))
     where
     munge :: L.Iso' (a, Maybe a) a
     munge = L.iso (\(x,my) -> maybe x (L.review prism . (x,)) my)
@@ -272,23 +309,30 @@ s *≫ a = L.iso (\((), x) -> x) ((),) ≪$≫ (s ≪*≫ a)
 a ≪* s = L.iso (\(x, ()) -> x) (,()) ≪$≫ (a ≪*≫ s)
 
 
-expg :: (Syntax g, SyntaxF g ~ Builder (Const String)) => g Exp
-expg = focus showNode $
+expg :: (Syntax g) => g Exp
+expg = focus $
        _Lambda ≪?≫ (symbol "\\" *≫ nameg ≪* symbol ".")  ≪:≫ expg
    ≪|≫ _Let ≪?≫ (symbol "let" *≫ listg defng ≪* symbol "in") ≪:≫ expg
    ≪|≫ chainl1 (symbol " ") _App termg
 
-termg :: (Syntax g, SyntaxF g ~ Builder (Const String)) => g Exp
+termg :: (Syntax g) => g Exp
 termg = _Var ≪?≫ nameg
     ≪|≫ parens expg
 
-defng :: (Syntax g, SyntaxF g ~ Builder (Const String)) => g Defn
-defng = focus showNode $ _Defn ≪?≫ (nameg ≪* symbol "=") ≪:≫ expg
+defng :: (Syntax g) => g Defn
+defng = focus $ _Defn ≪?≫ (nameg ≪* symbol "=") ≪:≫ expg
 
 
 example :: Exp
 example = App (Var "foo") (Var "bar")
 
+example2 :: Exp
+example2 = Lambda "f" (Let [Defn "r" (App (Var "f") (Var "r"))] (Var "r"))
+
+example3 :: Exp
+example3 = Lambda "f" (App (Lambda "x" (App (Var "f") (App (Var "x") (Var "x"))))
+                           (Lambda "x" (App (Var "f") (App (Var "x") (Var "x")))))
+
 main :: IO ()
 main = do
-    print $ runEditor expg example
+    print (runEditor expg example3 :: Maybe (Const String Exp))
