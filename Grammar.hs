@@ -19,11 +19,8 @@ module Grammar where
 import qualified Control.Lens as L
 import qualified Data.Text.Prettyprint.Doc as PP
 import Control.Applicative (liftA2, (<|>))
-import Control.Comonad (Comonad(..))
-import Control.Comonad.Cofree (Cofree(..))
-import Control.Monad ((<=<), join)
+import Control.Monad ((<=<))
 import Data.Bifunctor (first)
-import Data.Monoid (Monoid(..), First(..))
 
 import Data.Functor.Const
 import Monoidal
@@ -89,106 +86,6 @@ vConsWith f (View v x) (View v' x') = View (f v v') (L.view consiso (x,x'))
 
 (<+>) :: (TupleCons t a b) => View (PP.Doc s) a -> View (PP.Doc s) b -> View (PP.Doc s) t
 (<+>) = vConsWith (PP.<+>)
-
-------------------- interactive editor -----------------------
-
-
-data Input = ILeft | IRight | IUp | IDown | IChar Char
-    deriving (Show)
-
-newtype InputF a = InputF { runInputF :: Input -> First a }
-    deriving (Functor, Semigroup, Monoid)
-
-newtype Nav a = Nav { runNav :: Cofree InputF a }
-    deriving (Functor)
-
-data Focused = Focused | Unfocused
-    deriving (Eq,Ord,Show)
-
-instance Semigroup Focused where
-    Focused <> Focused = Focused
-    _ <> _ = Unfocused
-
-instance Monoid Focused where
-    mempty = Focused  -- seems strange, but it's indeed the unit of <>
-
-type Focusable = (->) Focused
-
-data PDPair a b x where
-    PDLeft :: b -> PDPair a b a
-    PDRight :: a -> PDPair a b b
-
-data Loc p = forall a. Loc (p a) a 
-
-adjacent :: Nav a -> Nav b -> Nav (Loc (PDPair a b))
-adjacent = \(Nav n) (Nav n') -> Nav (leftCont n n')
-    where
-    leftCont (x :< xi) ys = Loc (PDLeft (extract ys)) x :< 
-        ((\xs -> leftCont xs ys) <$> xi) <> InputF (\case
-            IRight -> pure (rightCont (x :< xi) ys)
-            _ -> mempty)
-    rightCont xs (y :< yi) = Loc (PDRight (extract xs)) y :< 
-        ((\ys -> rightCont xs ys) <$> yi) <> InputF (\case
-            ILeft -> pure (leftCont xs (y :< yi))
-            _ -> mempty)
-
--- Ok, so we're perhaps ultimately trying to build a `Nav (Zipper a)` -- a way
--- to navigate around a's with context.  adjacent returns a partial derivative,
--- then we use combinators to reassociate as necessary.  In adjacent, a might
--- itself be a zipper, but adjacent needn't know that; however we should be
--- able to massage Loc (PDPair (Zipper a) (Zipper b)) into Zipper (a,b) 
--- (perhaps, though using Zipper twice on the left is suspect, seems more like
--- Zipper should be applied like liebniz.  Is it?)
-
--- Loc (f * g) 
---   =? Loc f * g + f * Loc g
--- 
--- ^ This doesn't make sense.  Loc (f * g) is a type, but f and g are functors.
--- Perhaps there is hope of a liebniz rule in the non-existential variant:
---
--- Z (f * g) a
---   = a * D (f * g) a
---   = a * (D f * g + f * D g) a
---   = a * (D f a * g a + f a * D g a)
---   = a * D f a * g a + a * f a * D g a
---   = (a * D f a * g a) + (f a * a * Z g a)
---   = (Z f * g) a + (f * Z g) a
---
--- Yep!  But now we require a monotyped focus, right?
-
-withFocus :: Focused -> Focusable a -> Focusable a
-withFocus foc x = x . (foc <>)
-
-refocus :: Loc (PDPair (Focusable a) (Focusable b)) -> (Focusable a, Focusable b)
-refocus (Loc (PDLeft b) a) = (withFocus Focused a, withFocus Unfocused b)
-refocus (Loc (PDRight a) b) = (withFocus Unfocused a, withFocus Focused b)
-
-cat :: (Semigroup m) => Nav (Focusable m) -> Nav (Focusable m) -> Nav (Focusable m)
-cat m n = uncurry (<>) . refocus <$> adjacent m n
-
-string :: String -> Nav (Focusable String)
-string s = Nav $ render :< InputF (\case
-    IChar c -> pure (runNav (string (s ++ [c])))
-    _ -> mempty)
-    where
-    render Unfocused = s
-    render Focused = "{" ++ s ++ "}"
-       
-
-simNav :: (Show a) => Nav (Focusable a) -> IO ()
-simNav = go . runNav
-    where
-    go (x :< xs) = do
-        print (x Focused)
-        line <- getLine
-        let inp = case line of
-                    "left" -> Just ILeft
-                    "right" -> Just IRight
-                    "up" -> Just IUp
-                    "down" -> Just IDown
-                    [c] -> Just (IChar c)
-                    _ -> Nothing
-        maybe (putStrLn "no" >> go (x :< xs)) go $ join (getFirst . runInputF xs <$> inp) 
 
 
 ------------------- destructuring traversal -------------------
