@@ -18,6 +18,7 @@ module Grammar where
 
 import qualified Control.Lens as L
 import qualified Data.Text.Prettyprint.Doc as PP
+import qualified Nav
 import Control.Applicative (liftA2, (<|>))
 import Control.Monad ((<=<))
 import Data.Bifunctor (first)
@@ -81,6 +82,9 @@ instance (Functor f) => Monoidal (Builder f) where
 data View v a = View v a
     deriving (Functor)
 
+instance (Show v) => Show (View v a) where
+    show (View v _) = show v
+
 instance (Monoid v) => Applicative (View v) where
     pure = View mempty
     View v f <*> View v' x = View (v <> v') (f x)
@@ -94,32 +98,42 @@ vConsWith f (View v x) (View v' x') = View (f v v') (L.view consiso (x,x'))
 
 ------------------- destructuring traversal -------------------
 
+-- I'm eventually trying to compose together the type 
+--
+--    Editor attr a = a -> Maybe (Nav (View (PP.Doc attr) a)).
+--
+-- Supporting the methods
+--
+--    char :: g Char
+--    string :: String -> g ()
+--    focus :: g a -> g a
+-- 
+-- `View (PP.Doc attr)` has `string`. `Nav` has `focus`.  `Editor attr` has
+-- `char` -- the ability to pass input to output.  But how these all fit
+-- together into a coherent composition of abstractions is eluding me.
+--
+-- Maybe we should stop trying to be clever and just go for it directly.  We
+-- can abstract away patterns later.
 
-newtype Editor f a = Editor { runEditor :: a -> Maybe (f a) }
+newtype Editor i attr a = Editor { runEditor :: a -> Maybe (Nav.FocNav i (View (PP.Doc attr) a)) }
 
 $( L.makePrisms ''Editor )
 
-instance (Functor f) => IsoFunctor (Editor f) where
-    isomap i = _Editor . L.dimapping (L.from i) (L.mapping (L.mapping i)) . L.from _Editor
+instance IsoFunctor (Editor i attr) where
+    isomap i = _Editor . L.dimapping (L.from i) (L.mapping (L.mapping (L.mapping i))) . L.from _Editor
 
-instance (Applicative f) => Monoidal (Editor f) where
-    unit = Editor (\() -> pure (pure ()))
-    Editor f ≪*≫ Editor g = Editor $ \(x,y) -> (liftA2.liftA2) (,) (f x) (g y)
+instance (Nav.NavInput i) => Monoidal (Editor i attr) where
+    unit = Editor (\() -> pure (pure (pure ())))
+    Editor f ≪*≫ Editor g = Editor $ \(x,y) -> (liftA2.liftA2.liftA2) (,) (f x) (g y)
 
-instance (Applicative f) => Grammar (Editor f) where
+instance (Nav.NavInput i) => Grammar (Editor i attr) where
     empty = Editor (\_ -> Nothing)
-    p ≪?≫ ed = Editor $ (fmap.fmap) (L.review p) . runEditor ed <=< L.preview p
+    p ≪?≫ ed = Editor $ (fmap.fmap.fmap) (L.review p) . runEditor ed <=< L.preview p
     ed ≪|≫ ed' = Editor $ \x -> runEditor ed x <|> runEditor ed' x
 
-instance Syntax (Editor (Const String)) where
-    char = Editor (\c -> pure (Const [c]))
-    symbol s = Editor (\_ -> pure (Const s))
-    focus = id
-
-
-instance Syntax (Editor (View (PP.Doc a))) where
-    char = Editor (\c -> pure (View (PP.pretty c) c))
-    symbol s = Editor (\u -> pure (View (PP.pretty s) u))
+instance (Nav.NavInput i) => Syntax (Editor i attr) where
+    char = Editor (\c -> pure (pure (View (PP.pretty c) c)))
+    symbol s = Editor (\u -> pure (pure (View (PP.pretty s) u)))
     focus = id
 
 

@@ -14,6 +14,7 @@ import Data.Monoid (First(..))
 import Control.Comonad (extract)
 import Control.Comonad.Cofree (Cofree(..))
 import Control.Monad (join)
+import Control.Applicative (Alternative(..), liftA2)
 
 class NavInput i where
     _ILeft :: L.Prism' i ()
@@ -35,9 +36,26 @@ pattern IChar c <- (L.matching _IChar -> Right c) where
 newtype InputF i a = InputF { runInputF :: i -> First a }
     deriving (Functor, Semigroup, Monoid)
 
+instance Applicative (InputF i) where
+    pure = InputF . pure . pure
+    InputF f <*> InputF x = InputF (liftA2 (<*>) f x)
+
+instance Alternative (InputF i) where
+    empty = InputF (pure mempty)
+    InputF a <|> InputF b = InputF (liftA2 (<>) a b)
+
 newtype Nav i a = Nav { runNav :: Cofree (InputF i) a }
     deriving (Functor)
 
+newtype FocNav i a = FocNav { runFocNav :: Nav i (Focusable a) }
+    deriving (Functor)
+
+instance (NavInput i) => Applicative (FocNav i) where
+    pure = FocNav . Nav . repeatCofree . pure
+    FocNav f <*> FocNav x = FocNav $ uncurry (<*>) . distribFocus <$> adjacent f x
+
+repeatCofree :: (Applicative f) => a -> Cofree f a
+repeatCofree x = let r = x :< pure r in r
 
 data PDPair a b x where
     PDLeft :: b -> PDPair a b a

@@ -4,10 +4,10 @@
 module Main where
 
 import qualified Control.Lens as L
-import qualified Data.Text.Prettyprint.Doc as PP
 
 import Monoidal
 import Grammar
+import qualified Nav
 
 type Name = String
 
@@ -52,8 +52,16 @@ example3 :: Exp
 example3 = Lambda "f" (App (Lambda "x" (App (Var "f") (App (Var "x") (Var "x"))))
                            (Lambda "x" (App (Var "f") (App (Var "x") (Var "x")))))
 
+data Input = ILeft | IRight | IChar Char
+
+$( L.makePrisms ''Input )
+
+instance Nav.NavInput Input where
+    _ILeft = _ILeft
+    _IRight = _IRight
+    _IChar = _IChar
+
 main :: IO ()
 main = do
-    let Just (View v e) = runEditor expg example3 :: Maybe (View (PP.Doc ()) Exp)
-    print v
-    print e
+    let Just (Nav.FocNav nav) = runEditor (expg :: Editor Input () Exp) example3
+    Nav.simNav nav
