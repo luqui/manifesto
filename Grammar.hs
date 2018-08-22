@@ -227,10 +227,6 @@ _Cons = L.prism (uncurry (:)) (\case [] -> Left []; (x:xs) -> Right (x,xs))
 showNode :: (Show a) => Builder (Const String) a -> Builder (Const String) a
 showNode = addFocus (Const . show)
 
-listg :: (Grammar g) => g a -> g [a]
-listg g = _Nil ≪?≫ unit
-      ≪|≫ _Cons ≪?≫ g ≪:≫ listg g
-
 optional :: (Grammar g) => g a -> g (Maybe a)
 optional g = L._Just ≪?≫ g 
          ≪|≫ L._Nothing ≪?≫ unit
@@ -239,6 +235,10 @@ optional g = L._Just ≪?≫ g
 many :: (Grammar g) => g a -> g [a]
 many g = _Cons ≪?≫ (g ≪*≫ many g)
      ≪|≫ _Nil ≪?≫ unit
+
+manyDelim :: (Grammar g) => g () -> g a -> g [a]
+manyDelim delim g = _Cons ≪?≫ manyDelim1 delim g
+                ≪|≫ _Nil ≪?≫ unit 
 
 manyDelim1 :: (Grammar g) => g () -> g a -> g (a,[a])
 manyDelim1 delim g = g ≪*≫ many (delim *≫ g)
