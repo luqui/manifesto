@@ -81,6 +81,10 @@ instance (Functor f) => Monoidal (Builder f) where
 data View v a = View v a
     deriving (Functor)
 
+instance (Monoid v) => Applicative (View v) where
+    pure = View mempty
+    View v f <*> View v' x = View (v <> v') (f x)
+
 vConsWith :: (TupleCons t a b) => (v -> v' -> v'') -> View v a -> View v' b -> View v'' t
 vConsWith f (View v x) (View v' x') = View (f v v') (L.view consiso (x,x'))
 
@@ -108,10 +112,15 @@ instance (Applicative f) => Grammar (Editor f) where
     ed ≪|≫ ed' = Editor $ \x -> runEditor ed x <|> runEditor ed' x
 
 instance Syntax (Editor (Const String)) where
-    char = Editor (\c -> Just (Const [c]))
-    symbol s = Editor (\_ -> Just (Const s))
-    focus = id -- Editor . (fmap.fmap.first) (\s -> "{" ++ s ++ "}") . runEditor
+    char = Editor (\c -> pure (Const [c]))
+    symbol s = Editor (\_ -> pure (Const s))
+    focus = id
 
+
+instance Syntax (Editor (View (PP.Doc a))) where
+    char = Editor (\c -> pure (View (PP.pretty c) c))
+    symbol s = Editor (\u -> pure (View (PP.pretty s) u))
+    focus = id
 
 
 _Nil :: L.Prism' [a] ()

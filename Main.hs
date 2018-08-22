@@ -4,7 +4,7 @@
 module Main where
 
 import qualified Control.Lens as L
-import Data.Functor.Const (Const(..))
+import qualified Data.Text.Prettyprint.Doc as PP
 
 import Monoidal
 import Grammar
@@ -54,4 +54,6 @@ example3 = Lambda "f" (App (Lambda "x" (App (Var "f") (App (Var "x") (Var "x")))
 
 main :: IO ()
 main = do
-    print (runEditor expg example2 :: Maybe (Const String Exp))
+    let Just (View v e) = runEditor expg example3 :: Maybe (View (PP.Doc ()) Exp)
+    print v
+    print e
