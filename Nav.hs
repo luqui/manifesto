@@ -5,16 +5,40 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE ViewPatterns #-}
 
 module Nav where
 
 import qualified Control.Lens as L
-import Data.Monoid (First(..))
 import Control.Comonad (extract)
 import Control.Comonad.Cofree (Cofree(..))
 import Control.Monad (join)
 import Control.Applicative (Alternative(..), liftA2)
+import Data.Functor.Compose (Compose(..))
+
+
+newtype LiftA f g x = LiftA { getLiftA :: f (g x) }
+    deriving (Functor)
+
+instance (Applicative f, Applicative g) => Applicative (LiftA f g) where
+    pure = LiftA . pure . pure
+    LiftA f <*> LiftA x = LiftA (liftA2 (<*>) f x)
+
+instance (Applicative f, Alternative g) => Alternative (LiftA f g) where
+    empty = LiftA (pure empty)
+    LiftA x <|> LiftA y = LiftA (liftA2 (<|>) x y)
+
+
+newtype MaybeAT f a = MaybeAT { getMaybeAT :: Compose Maybe f a }
+    deriving (Functor, Applicative)
+
+instance Alternative f => Alternative (MaybeAT f) where
+    empty = MaybeAT (Compose empty)
+    MaybeAT (Compose Nothing) <|> b = b
+    a <|> MaybeAT (Compose Nothing) = a
+    MaybeAT (Compose (Just a)) <|> MaybeAT (Compose (Just b)) = MaybeAT (Compose (Just (a <|> b)))
+
 
 class NavInput i where
     _ILeft, _IRight, _IUp, _IDown :: L.Prism' i ()
@@ -42,18 +66,49 @@ pattern IChar c <- (L.matching _IChar -> Right c) where
 
 -- Value of an InputF is Nothing if there are no operations possible at all --
 -- i.e. this is not a valid hole.  
-newtype InputF i a = InputF { runInputF :: Maybe (i -> First a) }
-    deriving (Functor, Semigroup, Monoid)
 
-instance Applicative (InputF i) where
-    pure = InputF . pure . pure . pure
-    InputF f <*> InputF x = InputF ((liftA2.liftA2) (<*>) f x)
+newtype ActionF a = ActionF { runActionF :: Maybe a }
+    deriving (Functor, Applicative)
 
-instance Alternative (InputF i) where
-    empty = InputF mempty
-    InputF a <|> InputF b = InputF ((liftA2.liftA2) (<>) a b)
+pattern Exit :: ActionF a
+pattern Exit = ActionF Nothing
 
-newtype Nav i a = Nav { runNav :: Cofree (InputF i) a }
+pattern Continue :: a -> ActionF a
+pattern Continue a = ActionF (Just a)
+
+newtype ILog = ILog String
+instance Semigroup ILog where
+    ILog a <> ILog b = ILog (a ++ "|" ++ b)
+instance Monoid ILog where
+    mempty = ILog "[]"
+instance Show ILog where
+    show (ILog s) = s
+
+newtype RequestInput i a = Req { getReq :: Compose ((,) ILog) ((->) i) a }
+    deriving (Functor, Applicative)
+
+pattern RequestInput :: String -> (i -> a) -> RequestInput i a
+pattern RequestInput s f = Req (Compose (ILog s, f))
+
+newtype InputF i a = InputF { runInputF :: MaybeAT (LiftA (RequestInput i) Maybe) a }
+    deriving (Functor, Applicative, Alternative)
+
+newtype NavF i a = NavF { runNavF :: Compose (InputF i) ActionF a }
+    deriving (Functor, Applicative, Alternative)
+
+pattern NoInput :: NavF i a
+pattern NoInput = NavF (Compose (InputF (MaybeAT (Compose Nothing))))
+
+pattern InputHook :: RequestInput i (Maybe (ActionF a)) -> NavF i a
+pattern InputHook f = NavF (Compose (InputF (MaybeAT (Compose (Just (LiftA f))))))
+
+exitHook :: a -> NavF i a -> NavF i a
+exitHook _ NoInput = NoInput
+exitHook ex (InputHook (RequestInput s ih)) = InputHook (RequestInput s (\i -> fmap (\case Exit -> pure ex; a -> a) (ih i)))
+exitHook _ _ = error "impossible"
+
+
+newtype Nav i a = Nav { runNav :: Cofree (NavF i) a }
     deriving (Functor)
 
 newtype FocNav i a = FocNav { runFocNav :: Nav i (Focusable a) }
@@ -72,31 +127,31 @@ data Loc p = forall a. Loc (p a) a
 -- Loc (PDPair a b) is isomorphic to (Bool, a, b), where the bool indicates
 -- which one is in focus.  But this way is hinting at a deeper level of
 -- abstraction that I might find someday.
---
--- There is a problem here, and that is that it puts the focus on subtrees
--- without any `level`s.  E.g. We might focus on a trivial unit which has
--- no syntactic information.  What we want is to concatenate the collection
--- of holes using this logic, not the trees themselves.
 adjacent :: (NavInput i) => Nav i a -> Nav i b -> Nav i (Loc (PDPair a b))
 adjacent = \(Nav n) (Nav n') -> Nav $ leftCont n n'
     where
-    leftCont (x :< InputF Nothing) ys = Loc (PDRight x) <$> ys
-    leftCont (x :< InputF (Just xi)) ys = Loc (PDLeft (extract ys)) x :< 
-        ((\xs -> leftCont xs ys) <$> InputF (Just xi)) <> InputF (Just (\case
-            IRight -> moveRight (x :< InputF (Just xi)) ys
-            _ -> mempty))
+    (x :< NoInput) `leftCont` ys = Loc (PDRight x) <$> ys
+    (x :< xi) `leftCont` ys =
+        Loc (PDLeft (extract ys)) x :< 
+            (((`leftCont` ys) <$> xi) <|> InputHook (RequestInput "adjacent left" (\case
+                IRight -> ((x :< xi) `moveRight` ys)
+                IUp -> pure Exit
+                _ -> empty)))
 
-    moveRight _ (_ :< InputF Nothing) = mempty
-    moveRight xs (y :< InputF (Just yi)) = pure (rightCont xs (y :< InputF (Just yi)))
+    moveRight _ (_ :< NoInput) = empty
+    moveRight xs (y :< yi) = (pure.pure) (xs `rightCont` (y :< yi))
 
-    rightCont xs (y :< InputF Nothing) = Loc (PDLeft y) <$> xs
-    rightCont xs (y :< InputF (Just yi)) = Loc (PDRight (extract xs)) y :< 
-        ((\ys -> rightCont xs ys) <$> InputF (Just yi)) <> InputF (Just (\case
-            ILeft -> moveLeft xs (y :< InputF (Just yi))
-            _ -> mempty))
+    xs `rightCont` (y :< NoInput) = Loc (PDLeft y) <$> xs
+    xs `rightCont` (y :< yi) =
+        Loc (PDRight (extract xs)) y :<
+            (((xs `rightCont`) <$> yi) <|> InputHook (RequestInput "adjacent right" (\case
+                ILeft -> (xs `moveLeft` (y :< yi))
+                IUp -> pure Exit
+                _ -> empty)))
+    
+    moveLeft (_ :< NoInput) _ = empty
+    moveLeft (x :< xi) ys = (pure.pure) ((x :< xi) `leftCont` ys)
 
-    moveLeft (_ :< InputF Nothing) _ = mempty
-    moveLeft (x :< InputF (Just xi)) ys = pure (leftCont (x :< (InputF (Just xi))) ys)
 
 data PDLevel a x where
     PDOutside :: PDLevel a a
@@ -105,26 +160,12 @@ data PDLevel a x where
 level :: (NavInput i) => Nav i a -> Nav i (Loc (PDLevel a))
 level (Nav n) = Nav (outsideCont n)
     where
-    -- The commented variants never descend into a subtree that has no
-    -- available operations.
-    {-
-    outsideCont (x :< InputF Nothing) = Loc PDOutside x :< InputF Nothing
-    outsideCont (x :< InputF (Just xi)) = Loc PDOutside x :< InputF (Just (\case
-        IDown -> pure (insideCont (x :< InputF (Just xi)))
-        _ -> mempty))
-    -}
-    outsideCont (x :< xi) = Loc PDOutside x :< InputF (Just (\case
-        IDown -> pure (insideCont (x :< xi))
-        _ -> mempty))
-    {-
-    insideCont (x :< InputF Nothing) = Loc PDOutside x :< InputF Nothing  -- exit when there is no more input to be had inside? yes?
-    insideCont (x :< InputF (Just xi)) = Loc PDInside x :< (insideCont <$> InputF (Just xi)) <> InputF (Just (\case
-        IUp -> pure (outsideCont (x :< InputF (Just xi)))
-        _ -> mempty))
-    -}
-    insideCont (x :< xi) = Loc PDInside x :< (insideCont <$> xi) <> InputF (Just (\case
-        IUp -> pure (outsideCont (x :< xi))
-        _ -> mempty))
+    outsideCont (x :< xi) = Loc PDOutside x :< InputHook (RequestInput "level outside" (\case
+        IDown -> (pure.pure) (insideCont (x :< xi))
+        IUp -> pure Exit
+        _ -> empty))
+    insideCont (x :< xi) = Loc PDInside x :< 
+        exitHook (outsideCont (x :< xi)) (insideCont <$> xi)
 
 levelFocus :: (a -> a) -> Loc (PDLevel (Focusable a)) -> Focusable a
 levelFocus inFocus (Loc PDOutside x) Focused = inFocus (x Unfocused)
@@ -157,6 +198,7 @@ distribFocus (Loc (PDRight a) b) = (withFocus Unfocused a, withFocus Focused b)
 cat :: (Semigroup m, NavInput i) => Nav i (Focusable m) -> Nav i (Focusable m) -> Nav i (Focusable m)
 cat m n = uncurry (<>) . distribFocus <$> adjacent m n
 
+{-
 string :: (NavInput i) => String -> Nav i (Focusable String)
 string s = Nav $ render :< InputF (Just (\case
     IChar c -> pure (runNav (string (s ++ [c])))
@@ -164,6 +206,7 @@ string s = Nav $ render :< InputF (Just (\case
     where
     render Unfocused = s
     render Focused = "{" ++ s ++ "}"
+-}
        
 
 simNav :: (NavInput i, Show a) => Nav i (Focusable a) -> IO ()
@@ -171,12 +214,21 @@ simNav = go . runNav
     where
     go (x :< xs) = do
         print (x Focused)
-        line <- getLine
-        let inp = case line of
-                    "left" -> Just ILeft
-                    "right" -> Just IRight
-                    "up" -> Just IUp
-                    "down" -> Just IDown
-                    [c] -> Just (IChar c)
-                    _ -> Nothing
-        maybe (putStrLn "no" >> go (x :< xs)) go $ join (getFirst . maybe (const (First Nothing)) id (runInputF xs) <$> inp) 
+        case xs of
+            NoInput -> putStrLn "no input accepted"
+            InputHook (RequestInput s ih) -> do
+                putStr $ show s ++ "> "
+                line <- getLine
+                let inp = case line of
+                            "left" -> Just ILeft
+                            "right" -> Just IRight
+                            "up" -> Just IUp
+                            "down" -> Just IDown
+                            [c] -> Just (IChar c)
+                            _ -> Nothing
+                case join $ fmap ih inp of
+                    Nothing -> putStrLn "invalid" >> go (x :< xs)
+                    Just Exit -> putStrLn "exited"
+                    Just (Continue a) -> go a
+                    _ -> error "impossible"
+            _ -> error "impossible"
