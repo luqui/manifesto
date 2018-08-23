@@ -83,14 +83,20 @@ adjacent = \(Nav n) (Nav n') -> Nav $ leftCont n n'
     leftCont (x :< InputF Nothing) ys = Loc (PDRight x) <$> ys
     leftCont (x :< InputF (Just xi)) ys = Loc (PDLeft (extract ys)) x :< 
         ((\xs -> leftCont xs ys) <$> InputF (Just xi)) <> InputF (Just (\case
-            IRight -> pure (rightCont (x :< InputF (Just xi)) ys)
+            IRight -> moveRight (x :< InputF (Just xi)) ys
             _ -> mempty))
+
+    moveRight _ (_ :< InputF Nothing) = mempty
+    moveRight xs (y :< InputF (Just yi)) = pure (rightCont xs (y :< InputF (Just yi)))
 
     rightCont xs (y :< InputF Nothing) = Loc (PDLeft y) <$> xs
     rightCont xs (y :< InputF (Just yi)) = Loc (PDRight (extract xs)) y :< 
         ((\ys -> rightCont xs ys) <$> InputF (Just yi)) <> InputF (Just (\case
-            ILeft -> pure (leftCont xs (y :< InputF (Just yi)))
+            ILeft -> moveLeft xs (y :< InputF (Just yi))
             _ -> mempty))
+
+    moveLeft (_ :< InputF Nothing) _ = mempty
+    moveLeft (x :< InputF (Just xi)) ys = pure (leftCont (x :< (InputF (Just xi))) ys)
 
 data PDLevel a x where
     PDOutside :: PDLevel a a
