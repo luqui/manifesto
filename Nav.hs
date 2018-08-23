@@ -18,27 +18,6 @@ import Control.Applicative (Alternative(..), liftA2)
 import Data.Functor.Compose (Compose(..))
 
 
-newtype LiftA f g x = LiftA { getLiftA :: f (g x) }
-    deriving (Functor)
-
-instance (Applicative f, Applicative g) => Applicative (LiftA f g) where
-    pure = LiftA . pure . pure
-    LiftA f <*> LiftA x = LiftA (liftA2 (<*>) f x)
-
-instance (Applicative f, Alternative g) => Alternative (LiftA f g) where
-    empty = LiftA (pure empty)
-    LiftA x <|> LiftA y = LiftA (liftA2 (<|>) x y)
-
-
-newtype MaybeAT f a = MaybeAT { getMaybeAT :: Compose Maybe f a }
-    deriving (Functor, Applicative)
-
-instance Alternative f => Alternative (MaybeAT f) where
-    empty = MaybeAT (Compose empty)
-    MaybeAT (Compose Nothing) <|> b = b
-    a <|> MaybeAT (Compose Nothing) = a
-    MaybeAT (Compose (Just a)) <|> MaybeAT (Compose (Just b)) = MaybeAT (Compose (Just (a <|> b)))
-
 
 class NavInput i where
     _ILeft, _IRight, _IUp, _IDown :: L.Prism' i ()
@@ -68,7 +47,7 @@ pattern IChar c <- (L.matching _IChar -> Right c) where
 -- i.e. this is not a valid hole.  
 
 newtype ActionF a = ActionF { runActionF :: Maybe a }
-    deriving (Functor, Applicative)
+    deriving (Functor)
 
 pattern Exit :: ActionF a
 pattern Exit = ActionF Nothing
@@ -90,21 +69,37 @@ newtype RequestInput i a = Req { getReq :: Compose ((,) ILog) ((->) i) a }
 pattern RequestInput :: String -> (i -> a) -> RequestInput i a
 pattern RequestInput s f = Req (Compose (ILog s, f))
 
-newtype InputF i a = InputF { runInputF :: MaybeAT (LiftA (RequestInput i) Maybe) a }
-    deriving (Functor, Applicative, Alternative)
+newtype InputF i a = InputF { runInputF :: Compose Maybe (Compose (RequestInput i) Maybe) a }
+    deriving (Functor)
+
+instance Semigroup (InputF i a) where
+    InputF (Compose Nothing) <> b = b
+    a <> InputF (Compose Nothing) = a
+    InputF (Compose (Just (Compose a))) <> InputF (Compose (Just (Compose b))) = InputF (Compose (Just (Compose (liftA2 (<|>) a b))))
+
+instance Monoid (InputF i a) where
+    mempty = InputF (Compose Nothing)
 
 newtype NavF i a = NavF { runNavF :: Compose (InputF i) ActionF a }
-    deriving (Functor, Applicative, Alternative)
+    deriving (Functor)
+
+instance Semigroup (NavF i a) where
+    NavF (Compose x) <> NavF (Compose y) = NavF (Compose (x <> y))
+
+instance Monoid (NavF i a) where
+    mempty = NavF (Compose mempty)
+
+
 
 pattern NoInput :: NavF i a
-pattern NoInput = NavF (Compose (InputF (MaybeAT (Compose Nothing))))
+pattern NoInput = NavF (Compose (InputF (Compose Nothing)))
 
 pattern InputHook :: RequestInput i (Maybe (ActionF a)) -> NavF i a
-pattern InputHook f = NavF (Compose (InputF (MaybeAT (Compose (Just (LiftA f))))))
+pattern InputHook f = NavF (Compose (InputF (Compose (Just (Compose f)))))
 
 exitHook :: a -> NavF i a -> NavF i a
 exitHook _ NoInput = NoInput
-exitHook ex (InputHook (RequestInput s ih)) = InputHook (RequestInput s (\i -> fmap (\case Exit -> pure ex; a -> a) (ih i)))
+exitHook ex (InputHook (RequestInput s ih)) = InputHook (RequestInput s (\i -> fmap (\case Exit -> Continue ex; a -> a) (ih i)))
 exitHook _ _ = error "impossible"
 
 
@@ -115,7 +110,7 @@ newtype FocNav i a = FocNav { runFocNav :: Nav i (Focusable a) }
     deriving (Functor)
 
 instance (NavInput i) => Applicative (FocNav i) where
-    pure = FocNav . Nav . pure . pure
+    pure x = FocNav (Nav (pure x :< NavF (Compose mempty)))
     FocNav f <*> FocNav x = FocNav $ uncurry (<*>) . distribFocus <$> adjacent f x
 
 data PDPair a b x where
@@ -133,24 +128,24 @@ adjacent = \(Nav n) (Nav n') -> Nav $ leftCont n n'
     (x :< NoInput) `leftCont` ys = Loc (PDRight x) <$> ys
     (x :< xi) `leftCont` ys =
         Loc (PDLeft (extract ys)) x :< 
-            (((`leftCont` ys) <$> xi) <|> InputHook (RequestInput "adjacent left" (\case
+            (((`leftCont` ys) <$> xi) <> InputHook (RequestInput "adjacent left" (\case
                 IRight -> ((x :< xi) `moveRight` ys)
                 IUp -> pure Exit
                 _ -> empty)))
 
     moveRight _ (_ :< NoInput) = empty
-    moveRight xs (y :< yi) = (pure.pure) (xs `rightCont` (y :< yi))
+    moveRight xs (y :< yi) = (pure.Continue) (xs `rightCont` (y :< yi))
 
     xs `rightCont` (y :< NoInput) = Loc (PDLeft y) <$> xs
     xs `rightCont` (y :< yi) =
         Loc (PDRight (extract xs)) y :<
-            (((xs `rightCont`) <$> yi) <|> InputHook (RequestInput "adjacent right" (\case
+            (((xs `rightCont`) <$> yi) <> InputHook (RequestInput "adjacent right" (\case
                 ILeft -> (xs `moveLeft` (y :< yi))
                 IUp -> pure Exit
                 _ -> empty)))
     
     moveLeft (_ :< NoInput) _ = empty
-    moveLeft (x :< xi) ys = (pure.pure) ((x :< xi) `leftCont` ys)
+    moveLeft (x :< xi) ys = (pure.Continue) ((x :< xi) `leftCont` ys)
 
 
 data PDLevel a x where
@@ -161,7 +156,7 @@ level :: (NavInput i) => Nav i a -> Nav i (Loc (PDLevel a))
 level (Nav n) = Nav (outsideCont n)
     where
     outsideCont (x :< xi) = Loc PDOutside x :< InputHook (RequestInput "level outside" (\case
-        IDown -> (pure.pure) (insideCont (x :< xi))
+        IDown -> (pure.Continue) (insideCont (x :< xi))
         IUp -> pure Exit
         _ -> empty))
     insideCont (x :< xi) = Loc PDInside x :< 
