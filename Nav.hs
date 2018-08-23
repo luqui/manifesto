@@ -40,16 +40,18 @@ pattern IChar :: (NavInput i) => Char -> i
 pattern IChar c <- (L.matching _IChar -> Right c) where
     IChar c = L.review _IChar c
 
-newtype InputF i a = InputF { runInputF :: i -> First a }
+-- Value of an InputF is Nothing if there are no operations possible at all --
+-- i.e. this is not a valid hole.  
+newtype InputF i a = InputF { runInputF :: Maybe (i -> First a) }
     deriving (Functor, Semigroup, Monoid)
 
 instance Applicative (InputF i) where
-    pure = InputF . pure . pure
-    InputF f <*> InputF x = InputF (liftA2 (<*>) f x)
+    pure = InputF . pure . pure . pure
+    InputF f <*> InputF x = InputF ((liftA2.liftA2) (<*>) f x)
 
 instance Alternative (InputF i) where
-    empty = InputF (pure mempty)
-    InputF a <|> InputF b = InputF (liftA2 (<>) a b)
+    empty = InputF mempty
+    InputF a <|> InputF b = InputF ((liftA2.liftA2) (<>) a b)
 
 newtype Nav i a = Nav { runNav :: Cofree (InputF i) a }
     deriving (Functor)
@@ -76,16 +78,19 @@ data Loc p = forall a. Loc (p a) a
 -- no syntactic information.  What we want is to concatenate the collection
 -- of holes using this logic, not the trees themselves.
 adjacent :: (NavInput i) => Nav i a -> Nav i b -> Nav i (Loc (PDPair a b))
-adjacent = \(Nav n) (Nav n') -> Nav (leftCont n n')
+adjacent = \(Nav n) (Nav n') -> Nav $ leftCont n n'
     where
-    leftCont (x :< xi) ys = Loc (PDLeft (extract ys)) x :< 
-        ((\xs -> leftCont xs ys) <$> xi) <> InputF (\case
-            IRight -> pure (rightCont (x :< xi) ys)
-            _ -> mempty)
-    rightCont xs (y :< yi) = Loc (PDRight (extract xs)) y :< 
-        ((\ys -> rightCont xs ys) <$> yi) <> InputF (\case
-            ILeft -> pure (leftCont xs (y :< yi))
-            _ -> mempty)
+    leftCont (x :< InputF Nothing) ys = Loc (PDRight x) <$> ys
+    leftCont (x :< InputF (Just xi)) ys = Loc (PDLeft (extract ys)) x :< 
+        ((\xs -> leftCont xs ys) <$> InputF (Just xi)) <> InputF (Just (\case
+            IRight -> pure (rightCont (x :< InputF (Just xi)) ys)
+            _ -> mempty))
+
+    rightCont xs (y :< InputF Nothing) = Loc (PDLeft y) <$> xs
+    rightCont xs (y :< InputF (Just yi)) = Loc (PDRight (extract xs)) y :< 
+        ((\ys -> rightCont xs ys) <$> InputF (Just yi)) <> InputF (Just (\case
+            ILeft -> pure (leftCont xs (y :< InputF (Just yi)))
+            _ -> mempty))
 
 data PDLevel a x where
     PDOutside :: PDLevel a a
@@ -94,12 +99,26 @@ data PDLevel a x where
 level :: (NavInput i) => Nav i a -> Nav i (Loc (PDLevel a))
 level (Nav n) = Nav (outsideCont n)
     where
-    outsideCont (x :< xi) = Loc PDOutside x :< InputF (\case
+    -- The commented variants never descend into a subtree that has no
+    -- available operations.
+    {-
+    outsideCont (x :< InputF Nothing) = Loc PDOutside x :< InputF Nothing
+    outsideCont (x :< InputF (Just xi)) = Loc PDOutside x :< InputF (Just (\case
+        IDown -> pure (insideCont (x :< InputF (Just xi)))
+        _ -> mempty))
+    -}
+    outsideCont (x :< xi) = Loc PDOutside x :< InputF (Just (\case
         IDown -> pure (insideCont (x :< xi))
-        _ -> mempty)
-    insideCont (x :< xi) = Loc PDInside x :< (insideCont <$> xi) <> InputF (\case
+        _ -> mempty))
+    {-
+    insideCont (x :< InputF Nothing) = Loc PDOutside x :< InputF Nothing  -- exit when there is no more input to be had inside? yes?
+    insideCont (x :< InputF (Just xi)) = Loc PDInside x :< (insideCont <$> InputF (Just xi)) <> InputF (Just (\case
+        IUp -> pure (outsideCont (x :< InputF (Just xi)))
+        _ -> mempty))
+    -}
+    insideCont (x :< xi) = Loc PDInside x :< (insideCont <$> xi) <> InputF (Just (\case
         IUp -> pure (outsideCont (x :< xi))
-        _ -> mempty)
+        _ -> mempty))
 
 levelFocus :: (a -> a) -> Loc (PDLevel (Focusable a)) -> Focusable a
 levelFocus inFocus (Loc PDOutside x) Focused = inFocus (x Unfocused)
@@ -133,9 +152,9 @@ cat :: (Semigroup m, NavInput i) => Nav i (Focusable m) -> Nav i (Focusable m) -
 cat m n = uncurry (<>) . distribFocus <$> adjacent m n
 
 string :: (NavInput i) => String -> Nav i (Focusable String)
-string s = Nav $ render :< InputF (\case
+string s = Nav $ render :< InputF (Just (\case
     IChar c -> pure (runNav (string (s ++ [c])))
-    _ -> mempty)
+    _ -> mempty))
     where
     render Unfocused = s
     render Focused = "{" ++ s ++ "}"
@@ -154,4 +173,4 @@ simNav = go . runNav
                     "down" -> Just IDown
                     [c] -> Just (IChar c)
                     _ -> Nothing
-        maybe (putStrLn "no" >> go (x :< xs)) go $ join (getFirst . runInputF xs <$> inp) 
+        maybe (putStrLn "no" >> go (x :< xs)) go $ join (getFirst . maybe (const (First Nothing)) id (runInputF xs) <$> inp) 
