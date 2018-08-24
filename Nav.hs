@@ -46,14 +46,10 @@ pattern IChar c <- (L.matching _IChar -> Right c) where
 -- Value of an InputF is Nothing if there are no operations possible at all --
 -- i.e. this is not a valid hole.  
 
-newtype ActionF a = ActionF { runActionF :: Maybe a }
+data ActionF a
+    = Exit a
+    | Continue a
     deriving (Functor)
-
-pattern Exit :: ActionF a
-pattern Exit = ActionF Nothing
-
-pattern Continue :: a -> ActionF a
-pattern Continue a = ActionF (Just a)
 
 newtype ILog = ILog String
 instance Semigroup ILog where
@@ -97,10 +93,13 @@ pattern NoInput = NavF (Compose (InputF (Compose Nothing)))
 pattern InputHook :: RequestInput i (Maybe (ActionF a)) -> NavF i a
 pattern InputHook f = NavF (Compose (InputF (Compose (Just (Compose f)))))
 
-exitHook :: a -> NavF i a -> NavF i a
-exitHook _ NoInput = NoInput
-exitHook ex (InputHook (RequestInput s ih)) = InputHook (RequestInput s (\i -> fmap (\case Exit -> Continue ex; a -> a) (ih i)))
-exitHook _ _ = error "impossible"
+exitHook :: (a -> b) -> NavF i a -> RequestInput i (a -> Maybe (ActionF b)) -> NavF i b
+exitHook _ NoInput _ = NoInput
+exitHook t (InputHook (RequestInput s ih)) (RequestInput s' ih') = 
+    InputHook (RequestInput (s ++ "?" ++ s') (\i -> case ih i of
+        Just (Exit a') -> ih' i a'
+        a -> (fmap.fmap) t a)) 
+exitHook _ _ _ = error "impossible"
 
 
 newtype Nav i a = Nav { runNav :: Cofree (NavF i) a }
@@ -128,23 +127,25 @@ adjacent = \(Nav n) (Nav n') -> Nav $ leftCont n n'
     (x :< NoInput) `leftCont` ys = Loc (PDRight x) <$> ys
     (x :< xi) `leftCont` ys =
         Loc (PDLeft (extract ys)) x :< 
-            (((`leftCont` ys) <$> xi) <> InputHook (RequestInput "adjacent left" (\case
-                IRight -> ((x :< xi) `moveRight` ys)
-                IUp -> pure Exit
-                _ -> empty)))
+            (exitHook (`leftCont` ys) xi $ RequestInput "adjacent left" (\case
+                IRight -> \xs' -> (xs' `moveRight` ys)
+                ILeft -> \xs' -> pure (Exit (xs' `leftCont` ys))
+                IUp -> \xs' -> pure (Exit (xs' `leftCont` ys))
+                _ -> \_ -> empty))
 
-    moveRight _ (_ :< NoInput) = empty
+    moveRight xs (y :< NoInput) = pure (Exit (Loc (PDLeft y) <$> xs))
     moveRight xs (y :< yi) = (pure.Continue) (xs `rightCont` (y :< yi))
 
     xs `rightCont` (y :< NoInput) = Loc (PDLeft y) <$> xs
     xs `rightCont` (y :< yi) =
         Loc (PDRight (extract xs)) y :<
-            (((xs `rightCont`) <$> yi) <> InputHook (RequestInput "adjacent right" (\case
-                ILeft -> (xs `moveLeft` (y :< yi))
-                IUp -> pure Exit
-                _ -> empty)))
+            (exitHook (xs `rightCont`) yi $ RequestInput "adjacent right" (\case
+                ILeft -> \ys' -> (xs `moveLeft` ys')
+                IRight -> \ys' -> pure (Exit (xs `leftCont` ys'))
+                IUp -> \ys' -> pure (Exit (xs `leftCont` ys'))
+                _ -> \_ -> empty))
     
-    moveLeft (_ :< NoInput) _ = empty
+    moveLeft (x :< NoInput) ys = pure (Exit (Loc (PDRight x) <$> ys))
     moveLeft (x :< xi) ys = (pure.Continue) ((x :< xi) `leftCont` ys)
 
 
@@ -157,10 +158,14 @@ level (Nav n) = Nav (outsideCont n)
     where
     outsideCont (x :< xi) = Loc PDOutside x :< InputHook (RequestInput "level outside" (\case
         IDown -> (pure.Continue) (insideCont (x :< xi))
-        IUp -> pure Exit
+        ILeft -> pure (Exit (outsideCont (x :< xi)))
+        IRight -> pure (Exit (outsideCont (x :< xi)))
+        IUp -> pure (Exit (outsideCont (x :< xi)))
         _ -> empty))
     insideCont (x :< xi) = Loc PDInside x :< 
-        exitHook (outsideCont (x :< xi)) (insideCont <$> xi)
+        (exitHook insideCont xi $ RequestInput "level outer" (\case
+            IUp -> \xs' -> (pure.Continue) (outsideCont xs')
+            _ -> \_ -> empty))
 
 levelFocus :: (a -> a) -> Loc (PDLevel (Focusable a)) -> Focusable a
 levelFocus inFocus (Loc PDOutside x) Focused = inFocus (x Unfocused)
@@ -223,7 +228,6 @@ simNav = go . runNav
                             _ -> Nothing
                 case join $ fmap ih inp of
                     Nothing -> putStrLn "invalid" >> go (x :< xs)
-                    Just Exit -> putStrLn "exited"
+                    Just (Exit _) -> putStrLn "exited"
                     Just (Continue a) -> go a
-                    _ -> error "impossible"
             _ -> error "impossible"
