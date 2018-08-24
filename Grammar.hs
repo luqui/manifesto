@@ -30,15 +30,6 @@ import Monoidal
 infix 4 ≪?≫
 infixr 3 ≪|≫
 
-class HFunctor h where
-    hfmap :: (forall x. f x -> g x) -> h f -> h g
-
-instance HFunctor (Const b) where
-    hfmap _ (Const x) = Const x
-
-instance (HFunctor f, HFunctor g) => HFunctor (f :*: g) where
-    hfmap f (Product x y) = Product (hfmap f x) (hfmap f y)
-
 class (Monoidal g) => Grammar g where
     (≪?≫) :: L.Prism' a b -> g b -> g a
     (≪|≫) :: g a -> g a -> g a
