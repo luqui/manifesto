@@ -14,7 +14,6 @@ module Nav where
 import qualified Control.Lens as L
 import Control.Comonad (extract)
 import Control.Comonad.Cofree (Cofree(..))
-import Data.Functor.Compose (Compose(..))
 
 
 class NavInput i where
@@ -48,19 +47,8 @@ pattern IChar c <- (L.matching _IChar -> Right c) where
 -- to handle.
 data Action = Invalid | Delegate | Continue
 
-newtype ILog = ILog String
-instance Semigroup ILog where
-    ILog a <> ILog b = ILog (a ++ "|" ++ b)
-instance Monoid ILog where
-    mempty = ILog "[]"
-instance Show ILog where
-    show (ILog s) = s
-
-newtype RequestInput i a = Req { getReq :: Compose ((,) ILog) ((->) i) a }
-    deriving (Functor, Applicative)
-
-pattern RequestInput :: String -> (i -> a) -> RequestInput i a
-pattern RequestInput s f = Req (Compose (ILog s, f))
+data RequestInput i a = RequestInput String (i -> a)
+    deriving (Functor)
 
 -- Outer Maybe indicates whether this InputF is even an interactive element.
 -- We need to indicate this so that we can skip focusing on such elements in
@@ -77,7 +65,7 @@ pattern InputHook f = InputF (Just f)
 -- `delegateHook t nav handler` behaves like `t <$> nav` until it delgates, after
 -- which the `handler` takes over, presumably to handle the input that `nav`
 -- was unable to.  The handler is passed the final state of `nav` when it
--- delegated (inside Req
+-- delegated.
 delegateHook :: (a -> b) -> InputF i a -> RequestInput i (a -> (Action, b)) -> InputF i b
 delegateHook _ NoInput _ = NoInput
 delegateHook t (InputHook (RequestInput s ih)) (RequestInput s' ih') = 
