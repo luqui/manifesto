@@ -32,6 +32,13 @@ x ≪:≫ ys = L.withIso (isomap consiso) (\f _ -> f (x ≪*≫ ys))
 
 data (f :*: g) a = Product (f a) (g a)
 
+instance (IsoFunctor f, IsoFunctor g) => IsoFunctor (f :*: g) where
+    isomap i = L.iso (\(Product x y) -> Product (L.view (isomap i) x) (L.view (isomap i) y))
+                     (\(Product x y) -> Product (L.review (isomap i) x) (L.review (isomap i) y))
+
+instance (Monoidal f, Monoidal g) => Monoidal (f :*: g) where
+    unit = Product unit unit
+    Product x y ≪*≫ Product x' y' = Product (x ≪*≫ x') (y ≪*≫ y')
 
 
 class TupleCons t a b | t -> a b where

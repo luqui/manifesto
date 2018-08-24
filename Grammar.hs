@@ -41,15 +41,23 @@ class (Grammar g) => Syntax g where
     focus :: g a -> g a
 
 
+instance (Grammar f, Grammar g) => Grammar (f :*: g) where
+    p ≪?≫ Product g g' = Product (p ≪?≫ g) (p ≪?≫ g')
+    Product g h ≪|≫ Product g' h' = Product (g ≪|≫ g') (h ≪|≫ h')
+    empty = Product empty empty
+
+instance (Syntax f, Syntax g) => Syntax (f :*: g) where
+    char = Product char char
+    symbol s = Product (symbol s) (symbol s)
+    focus (Product g g') = Product (focus g) (focus g')
+
+
+
 ----------------- S expression builder -----------------
 
 data SExp a = SExp a [SExp a]
     deriving (Show, Functor)
 
--- This is interesting!  We flatten everything, but we don't
--- necessarily have to; Builder here could be essentially a
--- mapping between a proper a and an S-expression
--- representation thereof.
 data Builder f a = Builder a [SExp (f a)]
     deriving (Functor, Show)
 
@@ -89,23 +97,6 @@ vConsWith f (View v x) (View v' x') = View (f v v') (L.view consiso (x,x'))
 
 ------------------- destructuring traversal -------------------
 
--- I'm eventually trying to compose together the type 
---
---    Editor attr a = a -> Maybe (Nav (View (PP.Doc attr) a)).
---
--- Supporting the methods
---
---    char :: g Char
---    string :: String -> g ()
---    focus :: g a -> g a
--- 
--- `View (PP.Doc attr)` has `string`. `Nav` has `focus`.  `Editor attr` has
--- `char` -- the ability to pass input to output.  But how these all fit
--- together into a coherent composition of abstractions is eluding me.
---
--- Maybe we should stop trying to be clever and just go for it directly.  We
--- can abstract away patterns later.
-
 newtype Editor i attr a = Editor { runEditor :: a -> Maybe (Nav.FocNav i (View (PP.Doc attr) a)) }
 
 $( L.makePrisms ''Editor )
@@ -130,6 +121,7 @@ instance (Nav.NavInput i) => Syntax (Editor i attr) where
         docFoc :: View (PP.Doc attr) a -> View (PP.Doc attr) a
         docFoc (View v a) = View (PP.pretty "{" <> v <> PP.pretty "}") a
 
+------------------- Grammar combinators -------------------
 
 _Nil :: L.Prism' [a] ()
 _Nil = L.prism' (const []) (\case [] -> Just (); _ -> Nothing)
