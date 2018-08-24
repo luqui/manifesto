@@ -191,20 +191,6 @@ distribFocus :: Loc (PDPair (Focusable a) (Focusable b)) -> (Focusable a, Focusa
 distribFocus (Loc (PDLeft b) a) = (withFocus Focused a, withFocus Unfocused b)
 distribFocus (Loc (PDRight a) b) = (withFocus Unfocused a, withFocus Focused b)
 
-cat :: (Semigroup m, NavInput i) => Nav i (Focusable m) -> Nav i (Focusable m) -> Nav i (Focusable m)
-cat m n = uncurry (<>) . distribFocus <$> adjacent m n
-
-{-
-string :: (NavInput i) => String -> Nav i (Focusable String)
-string s = Nav $ render :< InputF (Just (\case
-    IChar c -> pure (runNav (string (s ++ [c])))
-    _ -> mempty))
-    where
-    render Unfocused = s
-    render Focused = "{" ++ s ++ "}"
--}
-       
-
 simNav :: (NavInput i, Show a) => Nav i (Focusable a) -> IO ()
 simNav = go . runNav
     where
