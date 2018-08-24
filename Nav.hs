@@ -63,26 +63,23 @@ pattern RequestInput :: String -> (i -> a) -> RequestInput i a
 pattern RequestInput s f = Req (Compose (ILog s, f))
 
 -- Outer Maybe indicates whether this InputF is even an interactive element.
--- We need to indicate this so that we can skip focusing on such
--- elements in `adjacent`.
-newtype InputF i a = InputF { runInputF :: Maybe (RequestInput i a) }
-    deriving (Functor)
-
-newtype NavF i a = NavF { runNavF :: InputF i (Action, a) }
+-- We need to indicate this so that we can skip focusing on such elements in
+-- `adjacent`.
+newtype InputF i a = InputF { runInputF :: Maybe (RequestInput i (Action, a)) }
     deriving (Functor)
 
 
 
-pattern NoInput :: NavF i a
-pattern NoInput = NavF (InputF Nothing)
+pattern NoInput :: InputF i a
+pattern NoInput = InputF Nothing
 
-pattern InputHook :: RequestInput i (Action, a) -> NavF i a
-pattern InputHook f = NavF (InputF (Just f))
+pattern InputHook :: RequestInput i (Action, a) -> InputF i a
+pattern InputHook f = InputF (Just f)
 
 -- `exitHook t nav handler` behaves like `t <$> nav` until it exits, after
 -- which the `handler` takes over, presumably to handle the input that `nav`
 -- was unable to.
-exitHook :: (a -> b) -> NavF i a -> RequestInput i (a -> (Action, b)) -> NavF i b
+exitHook :: (a -> b) -> InputF i a -> RequestInput i (a -> (Action, b)) -> InputF i b
 exitHook _ NoInput _ = NoInput
 exitHook t (InputHook (RequestInput s ih)) (RequestInput s' ih') = 
     InputHook (RequestInput (s ++ "?" ++ s') (\i -> case ih i of
@@ -91,7 +88,7 @@ exitHook t (InputHook (RequestInput s ih)) (RequestInput s' ih') =
 exitHook _ _ _ = error "impossible"
 
 
-newtype Nav i a = Nav { runNav :: Cofree (NavF i) a }
+newtype Nav i a = Nav { runNav :: Cofree (InputF i) a }
     deriving (Functor)
 
 newtype FocNav i a = FocNav { runFocNav :: Nav i (Focusable a) }
