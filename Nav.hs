@@ -17,7 +17,6 @@ import Control.Comonad.Cofree (Cofree(..))
 import Data.Functor.Compose (Compose(..))
 
 
-
 class NavInput i where
     _ILeft, _IRight, _IUp, _IDown :: L.Prism' i ()
     _IChar :: L.Prism' i Char
@@ -41,6 +40,7 @@ pattern IDown <- (L.matching _IDown -> Right ()) where
 pattern IChar :: (NavInput i) => Char -> i
 pattern IChar c <- (L.matching _IChar -> Right c) where
     IChar c = L.review _IChar c
+
 
 -- With each operation, an Action is communicated.  Continue means that the
 -- operation was handled by the context, and should continue in the context.
@@ -68,24 +68,23 @@ pattern RequestInput s f = Req (Compose (ILog s, f))
 newtype InputF i a = InputF { runInputF :: Maybe (RequestInput i (Action, a)) }
     deriving (Functor)
 
-
-
 pattern NoInput :: InputF i a
 pattern NoInput = InputF Nothing
 
 pattern InputHook :: RequestInput i (Action, a) -> InputF i a
 pattern InputHook f = InputF (Just f)
 
--- `exitHook t nav handler` behaves like `t <$> nav` until it exits, after
+-- `delegateHook t nav handler` behaves like `t <$> nav` until it delgates, after
 -- which the `handler` takes over, presumably to handle the input that `nav`
--- was unable to.
-exitHook :: (a -> b) -> InputF i a -> RequestInput i (a -> (Action, b)) -> InputF i b
-exitHook _ NoInput _ = NoInput
-exitHook t (InputHook (RequestInput s ih)) (RequestInput s' ih') = 
+-- was unable to.  The handler is passed the final state of `nav` when it
+-- delegated (inside Req
+delegateHook :: (a -> b) -> InputF i a -> RequestInput i (a -> (Action, b)) -> InputF i b
+delegateHook _ NoInput _ = NoInput
+delegateHook t (InputHook (RequestInput s ih)) (RequestInput s' ih') = 
     InputHook (RequestInput (s ++ "?" ++ s') (\i -> case ih i of
         (Delegate, a') -> ih' i a'
         a -> fmap t a)) 
-exitHook _ _ _ = error "impossible"
+delegateHook _ _ _ = error "impossible"
 
 
 newtype Nav i a = Nav { runNav :: Cofree (InputF i) a }
@@ -113,13 +112,13 @@ adjacent = \(Nav n) (Nav n') -> Nav $ leftCont n n'
     (x :< NoInput) `leftCont` ys = Loc (PDRight x) <$> ys
     (x :< xi) `leftCont` ys =
         Loc (PDLeft (extract ys)) x :< 
-            (exitHook (`leftCont` ys) xi $ RequestInput "adjacent left" (\case
+            (delegateHook (`leftCont` ys) xi $ RequestInput "adjacent left" (\case
                 IRight -> \xs' -> xs' `moveRight` ys
-                ILeft -> exit
-                IUp -> exit
+                ILeft -> delegate
+                IUp -> delegate
                 _ -> \xs' -> (Invalid, xs' `leftCont` ys)))
         where
-        exit = \xs' -> (Delegate, xs' `leftCont` ys)
+        delegate = \xs' -> (Delegate, xs' `leftCont` ys)
 
     moveRight xs (y :< NoInput) = (Delegate, Loc (PDLeft y) <$> xs)
     moveRight xs (y :< yi) = (Continue, xs `rightCont` (y :< yi))
@@ -127,13 +126,13 @@ adjacent = \(Nav n) (Nav n') -> Nav $ leftCont n n'
     xs `rightCont` (y :< NoInput) = Loc (PDLeft y) <$> xs
     xs `rightCont` (y :< yi) =
         Loc (PDRight (extract xs)) y :<
-            (exitHook (xs `rightCont`) yi $ RequestInput "adjacent right" (\case
+            (delegateHook (xs `rightCont`) yi $ RequestInput "adjacent right" (\case
                 ILeft -> \ys' -> xs `moveLeft` ys'
-                IRight -> exit
-                IUp -> exit
+                IRight -> delegate
+                IUp -> delegate
                 _ -> \ys' -> (Invalid, xs `rightCont` ys')))
         where
-        exit = \ys' -> (Delegate, xs `leftCont` ys')
+        delegate = \ys' -> (Delegate, xs `leftCont` ys')
     
     moveLeft (x :< NoInput) ys = (Delegate, Loc (PDRight x) <$> ys)
     moveLeft (x :< xi) ys = (Continue, (x :< xi) `leftCont` ys)
@@ -148,15 +147,15 @@ level (Nav n) = Nav (outsideCont n)
     where
     outsideCont (x :< xi) = Loc PDOutside x :< InputHook (RequestInput "level outside" (\case
         IDown | InputHook{} <- xi -> (Continue, insideCont (x :< xi))
-        ILeft -> exit
-        IRight -> exit
-        IUp -> exit
+        ILeft -> delegate
+        IRight -> delegate
+        IUp -> delegate
         _ -> (Invalid, curstate)))
         where
-        exit = (Delegate, curstate)
+        delegate = (Delegate, curstate)
         curstate = outsideCont (x :< xi)
     insideCont (x :< xi) = Loc PDInside x :< 
-        (exitHook insideCont xi $ RequestInput "level outer" (\case
+        (delegateHook insideCont xi $ RequestInput "level outer" (\case
             IUp -> \xs' -> (Continue, outsideCont xs')
             _ -> \_ -> (Invalid, insideCont (x :< xi))))
 
@@ -206,7 +205,7 @@ simNav = go . runNav
                             [c] -> Just (IChar c)
                             _ -> Nothing
                 case fmap ih inp of
-                    Just (Delegate, _) -> putStrLn "exited"
+                    Just (Delegate, _) -> putStrLn "delegated to the abyss"
                     Just (Continue, a) -> go a
                     _ -> putStrLn "invalid" >> go (x :< xs)
             _ -> error "impossible"
