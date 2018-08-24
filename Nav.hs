@@ -63,6 +63,9 @@ newtype RequestInput i a = Req { getReq :: Compose ((,) ILog) ((->) i) a }
 pattern RequestInput :: String -> (i -> a) -> RequestInput i a
 pattern RequestInput s f = Req (Compose (ILog s, f))
 
+-- Outer Maybe indicates whether this InputF is even an interactive element.
+-- We need to indicate this so that we can skip focusing on such
+-- elements in `adjacent`.
 newtype InputF i a = InputF { runInputF :: Maybe (RequestInput i (Maybe a)) }
     deriving (Functor)
 
@@ -85,6 +88,9 @@ pattern NoInput = NavF (InputF Nothing)
 pattern InputHook :: RequestInput i (Maybe (Action, a)) -> NavF i a
 pattern InputHook f = NavF (InputF (Just f))
 
+-- `exitHook t nav handler` behaves like `t <$> nav` until it exits, after
+-- which the `handler` takes over, presumably to handle the input that `nav`
+-- was unable to.
 exitHook :: (a -> b) -> NavF i a -> RequestInput i (a -> Maybe (Action, b)) -> NavF i b
 exitHook _ NoInput _ = NoInput
 exitHook t (InputHook (RequestInput s ih)) (RequestInput s' ih') = 
@@ -121,9 +127,11 @@ adjacent = \(Nav n) (Nav n') -> Nav $ leftCont n n'
         Loc (PDLeft (extract ys)) x :< 
             (exitHook (`leftCont` ys) xi $ RequestInput "adjacent left" (\case
                 IRight -> \xs' -> (xs' `moveRight` ys)
-                ILeft -> \xs' -> pure (Exit, xs' `leftCont` ys)
-                IUp -> \xs' -> pure (Exit, xs' `leftCont` ys)
+                ILeft -> exit
+                IUp -> exit
                 _ -> \_ -> empty))
+        where
+        exit = \xs' -> pure (Exit, xs' `leftCont` ys)
 
     moveRight xs (y :< NoInput) = pure (Exit, Loc (PDLeft y) <$> xs)
     moveRight xs (y :< yi) = (pure.(Continue,)) (xs `rightCont` (y :< yi))
@@ -133,9 +141,11 @@ adjacent = \(Nav n) (Nav n') -> Nav $ leftCont n n'
         Loc (PDRight (extract xs)) y :<
             (exitHook (xs `rightCont`) yi $ RequestInput "adjacent right" (\case
                 ILeft -> \ys' -> (xs `moveLeft` ys')
-                IRight -> \ys' -> pure (Exit, xs `leftCont` ys')
-                IUp -> \ys' -> pure (Exit, xs `leftCont` ys')
+                IRight -> exit
+                IUp -> exit
                 _ -> \_ -> empty))
+        where
+        exit = \ys' -> pure (Exit, xs `leftCont` ys')
     
     moveLeft (x :< NoInput) ys = pure (Exit, Loc (PDRight x) <$> ys)
     moveLeft (x :< xi) ys = (pure.(Continue,)) ((x :< xi) `leftCont` ys)
@@ -149,11 +159,13 @@ level :: (NavInput i) => Nav i a -> Nav i (Loc (PDLevel a))
 level (Nav n) = Nav (outsideCont n)
     where
     outsideCont (x :< xi) = Loc PDOutside x :< InputHook (RequestInput "level outside" (\case
-        IDown -> (pure.(Continue,)) (insideCont (x :< xi))
-        ILeft -> pure (Exit, outsideCont (x :< xi))
-        IRight -> pure (Exit, outsideCont (x :< xi))
-        IUp -> pure (Exit, outsideCont (x :< xi))
+        IDown | InputHook{} <- xi -> (pure.(Continue,)) (insideCont (x :< xi))
+        ILeft -> exit
+        IRight -> exit
+        IUp -> exit
         _ -> empty))
+        where
+        exit = pure (Exit, outsideCont (x :< xi))
     insideCont (x :< xi) = Loc PDInside x :< 
         (exitHook insideCont xi $ RequestInput "level outer" (\case
             IUp -> \xs' -> (pure.(Continue,)) (outsideCont xs')

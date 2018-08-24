@@ -32,7 +32,7 @@ expg = focus $
    ≪|≫ chainl1 (symbol " ") _App termg
 
 termg :: (Syntax g) => g Exp
-termg = _Var ≪?≫ nameg
+termg = focus (_Var ≪?≫ nameg)
     ≪|≫ parens expg
 
 defng :: (Syntax g) => g Defn
