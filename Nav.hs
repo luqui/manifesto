@@ -6,6 +6,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ViewPatterns #-}
 
 module Nav where
@@ -46,10 +47,7 @@ pattern IChar c <- (L.matching _IChar -> Right c) where
 -- Value of an InputF is Nothing if there are no operations possible at all --
 -- i.e. this is not a valid hole.  
 
-data ActionF a
-    = Exit a
-    | Continue a
-    deriving (Functor)
+data Action = Exit | Continue
 
 newtype ILog = ILog String
 instance Semigroup ILog where
@@ -76,7 +74,7 @@ instance Semigroup (InputF i a) where
 instance Monoid (InputF i a) where
     mempty = InputF Nothing
 
-newtype NavF i a = NavF { runNavF :: InputF i (ActionF a) }
+newtype NavF i a = NavF { runNavF :: InputF i (Action, a) }
     deriving (Functor, Semigroup, Monoid)
 
 
@@ -84,14 +82,14 @@ newtype NavF i a = NavF { runNavF :: InputF i (ActionF a) }
 pattern NoInput :: NavF i a
 pattern NoInput = NavF (InputF Nothing)
 
-pattern InputHook :: RequestInput i (Maybe (ActionF a)) -> NavF i a
+pattern InputHook :: RequestInput i (Maybe (Action, a)) -> NavF i a
 pattern InputHook f = NavF (InputF (Just f))
 
-exitHook :: (a -> b) -> NavF i a -> RequestInput i (a -> Maybe (ActionF b)) -> NavF i b
+exitHook :: (a -> b) -> NavF i a -> RequestInput i (a -> Maybe (Action, b)) -> NavF i b
 exitHook _ NoInput _ = NoInput
 exitHook t (InputHook (RequestInput s ih)) (RequestInput s' ih') = 
     InputHook (RequestInput (s ++ "?" ++ s') (\i -> case ih i of
-        Just (Exit a') -> ih' i a'
+        Just (Exit, a') -> ih' i a'
         a -> (fmap.fmap) t a)) 
 exitHook _ _ _ = error "impossible"
 
@@ -123,24 +121,24 @@ adjacent = \(Nav n) (Nav n') -> Nav $ leftCont n n'
         Loc (PDLeft (extract ys)) x :< 
             (exitHook (`leftCont` ys) xi $ RequestInput "adjacent left" (\case
                 IRight -> \xs' -> (xs' `moveRight` ys)
-                ILeft -> \xs' -> pure (Exit (xs' `leftCont` ys))
-                IUp -> \xs' -> pure (Exit (xs' `leftCont` ys))
+                ILeft -> \xs' -> pure (Exit, xs' `leftCont` ys)
+                IUp -> \xs' -> pure (Exit, xs' `leftCont` ys)
                 _ -> \_ -> empty))
 
-    moveRight xs (y :< NoInput) = pure (Exit (Loc (PDLeft y) <$> xs))
-    moveRight xs (y :< yi) = (pure.Continue) (xs `rightCont` (y :< yi))
+    moveRight xs (y :< NoInput) = pure (Exit, Loc (PDLeft y) <$> xs)
+    moveRight xs (y :< yi) = (pure.(Continue,)) (xs `rightCont` (y :< yi))
 
     xs `rightCont` (y :< NoInput) = Loc (PDLeft y) <$> xs
     xs `rightCont` (y :< yi) =
         Loc (PDRight (extract xs)) y :<
             (exitHook (xs `rightCont`) yi $ RequestInput "adjacent right" (\case
                 ILeft -> \ys' -> (xs `moveLeft` ys')
-                IRight -> \ys' -> pure (Exit (xs `leftCont` ys'))
-                IUp -> \ys' -> pure (Exit (xs `leftCont` ys'))
+                IRight -> \ys' -> pure (Exit, xs `leftCont` ys')
+                IUp -> \ys' -> pure (Exit, xs `leftCont` ys')
                 _ -> \_ -> empty))
     
-    moveLeft (x :< NoInput) ys = pure (Exit (Loc (PDRight x) <$> ys))
-    moveLeft (x :< xi) ys = (pure.Continue) ((x :< xi) `leftCont` ys)
+    moveLeft (x :< NoInput) ys = pure (Exit, Loc (PDRight x) <$> ys)
+    moveLeft (x :< xi) ys = (pure.(Continue,)) ((x :< xi) `leftCont` ys)
 
 
 data PDLevel a x where
@@ -151,14 +149,14 @@ level :: (NavInput i) => Nav i a -> Nav i (Loc (PDLevel a))
 level (Nav n) = Nav (outsideCont n)
     where
     outsideCont (x :< xi) = Loc PDOutside x :< InputHook (RequestInput "level outside" (\case
-        IDown -> (pure.Continue) (insideCont (x :< xi))
-        ILeft -> pure (Exit (outsideCont (x :< xi)))
-        IRight -> pure (Exit (outsideCont (x :< xi)))
-        IUp -> pure (Exit (outsideCont (x :< xi)))
+        IDown -> (pure.(Continue,)) (insideCont (x :< xi))
+        ILeft -> pure (Exit, outsideCont (x :< xi))
+        IRight -> pure (Exit, outsideCont (x :< xi))
+        IUp -> pure (Exit, outsideCont (x :< xi))
         _ -> empty))
     insideCont (x :< xi) = Loc PDInside x :< 
         (exitHook insideCont xi $ RequestInput "level outer" (\case
-            IUp -> \xs' -> (pure.Continue) (outsideCont xs')
+            IUp -> \xs' -> (pure.(Continue,)) (outsideCont xs')
             _ -> \_ -> empty))
 
 levelFocus :: (a -> a) -> Loc (PDLevel (Focusable a)) -> Focusable a
@@ -222,6 +220,6 @@ simNav = go . runNav
                             _ -> Nothing
                 case join $ fmap ih inp of
                     Nothing -> putStrLn "invalid" >> go (x :< xs)
-                    Just (Exit _) -> putStrLn "exited"
-                    Just (Continue a) -> go a
+                    Just (Exit, _) -> putStrLn "exited"
+                    Just (Continue, a) -> go a
             _ -> error "impossible"
