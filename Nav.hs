@@ -65,33 +65,27 @@ newtype RequestInput i a = Req { getReq :: Compose ((,) ILog) ((->) i) a }
 pattern RequestInput :: String -> (i -> a) -> RequestInput i a
 pattern RequestInput s f = Req (Compose (ILog s, f))
 
-newtype InputF i a = InputF { runInputF :: Compose Maybe (Compose (RequestInput i) Maybe) a }
+newtype InputF i a = InputF { runInputF :: Maybe (RequestInput i (Maybe a)) }
     deriving (Functor)
 
 instance Semigroup (InputF i a) where
-    InputF (Compose Nothing) <> b = b
-    a <> InputF (Compose Nothing) = a
-    InputF (Compose (Just (Compose a))) <> InputF (Compose (Just (Compose b))) = InputF (Compose (Just (Compose (liftA2 (<|>) a b))))
+    InputF Nothing <> b = b
+    a <> InputF Nothing = a
+    InputF (Just a) <> InputF (Just b) = InputF (Just (liftA2 (<|>) a b))
 
 instance Monoid (InputF i a) where
-    mempty = InputF (Compose Nothing)
+    mempty = InputF Nothing
 
-newtype NavF i a = NavF { runNavF :: Compose (InputF i) ActionF a }
-    deriving (Functor)
-
-instance Semigroup (NavF i a) where
-    NavF (Compose x) <> NavF (Compose y) = NavF (Compose (x <> y))
-
-instance Monoid (NavF i a) where
-    mempty = NavF (Compose mempty)
+newtype NavF i a = NavF { runNavF :: InputF i (ActionF a) }
+    deriving (Functor, Semigroup, Monoid)
 
 
 
 pattern NoInput :: NavF i a
-pattern NoInput = NavF (Compose (InputF (Compose Nothing)))
+pattern NoInput = NavF (InputF Nothing)
 
 pattern InputHook :: RequestInput i (Maybe (ActionF a)) -> NavF i a
-pattern InputHook f = NavF (Compose (InputF (Compose (Just (Compose f)))))
+pattern InputHook f = NavF (InputF (Just f))
 
 exitHook :: (a -> b) -> NavF i a -> RequestInput i (a -> Maybe (ActionF b)) -> NavF i b
 exitHook _ NoInput _ = NoInput
@@ -109,7 +103,7 @@ newtype FocNav i a = FocNav { runFocNav :: Nav i (Focusable a) }
     deriving (Functor)
 
 instance (NavInput i) => Applicative (FocNav i) where
-    pure x = FocNav (Nav (pure x :< NavF (Compose mempty)))
+    pure x = FocNav (Nav (pure x :< mempty))
     FocNav f <*> FocNav x = FocNav $ uncurry (<*>) . distribFocus <$> adjacent f x
 
 data PDPair a b x where
