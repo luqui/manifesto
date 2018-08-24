@@ -14,8 +14,6 @@ module Nav where
 import qualified Control.Lens as L
 import Control.Comonad (extract)
 import Control.Comonad.Cofree (Cofree(..))
-import Control.Monad (join)
-import Control.Applicative (Alternative(..), liftA2)
 import Data.Functor.Compose (Compose(..))
 
 
@@ -44,10 +42,11 @@ pattern IChar :: (NavInput i) => Char -> i
 pattern IChar c <- (L.matching _IChar -> Right c) where
     IChar c = L.review _IChar c
 
--- Value of an InputF is Nothing if there are no operations possible at all --
--- i.e. this is not a valid hole.  
-
-data Action = Exit | Continue
+-- With each operation, an Action is communicated.  Continue means that the
+-- operation was handled by the context, and should continue in the context.
+-- Delegate means the operation was not handled, and deferred to the parent context
+-- to handle.
+data Action = Invalid | Delegate | Continue
 
 newtype ILog = ILog String
 instance Semigroup ILog where
@@ -66,37 +65,29 @@ pattern RequestInput s f = Req (Compose (ILog s, f))
 -- Outer Maybe indicates whether this InputF is even an interactive element.
 -- We need to indicate this so that we can skip focusing on such
 -- elements in `adjacent`.
-newtype InputF i a = InputF { runInputF :: Maybe (RequestInput i (Maybe a)) }
+newtype InputF i a = InputF { runInputF :: Maybe (RequestInput i a) }
     deriving (Functor)
 
-instance Semigroup (InputF i a) where
-    InputF Nothing <> b = b
-    a <> InputF Nothing = a
-    InputF (Just a) <> InputF (Just b) = InputF (Just (liftA2 (<|>) a b))
-
-instance Monoid (InputF i a) where
-    mempty = InputF Nothing
-
 newtype NavF i a = NavF { runNavF :: InputF i (Action, a) }
-    deriving (Functor, Semigroup, Monoid)
+    deriving (Functor)
 
 
 
 pattern NoInput :: NavF i a
 pattern NoInput = NavF (InputF Nothing)
 
-pattern InputHook :: RequestInput i (Maybe (Action, a)) -> NavF i a
+pattern InputHook :: RequestInput i (Action, a) -> NavF i a
 pattern InputHook f = NavF (InputF (Just f))
 
 -- `exitHook t nav handler` behaves like `t <$> nav` until it exits, after
 -- which the `handler` takes over, presumably to handle the input that `nav`
 -- was unable to.
-exitHook :: (a -> b) -> NavF i a -> RequestInput i (a -> Maybe (Action, b)) -> NavF i b
+exitHook :: (a -> b) -> NavF i a -> RequestInput i (a -> (Action, b)) -> NavF i b
 exitHook _ NoInput _ = NoInput
 exitHook t (InputHook (RequestInput s ih)) (RequestInput s' ih') = 
     InputHook (RequestInput (s ++ "?" ++ s') (\i -> case ih i of
-        Just (Exit, a') -> ih' i a'
-        a -> (fmap.fmap) t a)) 
+        (Delegate, a') -> ih' i a'
+        a -> fmap t a)) 
 exitHook _ _ _ = error "impossible"
 
 
@@ -107,7 +98,7 @@ newtype FocNav i a = FocNav { runFocNav :: Nav i (Focusable a) }
     deriving (Functor)
 
 instance (NavInput i) => Applicative (FocNav i) where
-    pure x = FocNav (Nav (pure x :< mempty))
+    pure x = FocNav (Nav (pure x :< NoInput))
     FocNav f <*> FocNav x = FocNav $ uncurry (<*>) . distribFocus <$> adjacent f x
 
 data PDPair a b x where
@@ -126,29 +117,29 @@ adjacent = \(Nav n) (Nav n') -> Nav $ leftCont n n'
     (x :< xi) `leftCont` ys =
         Loc (PDLeft (extract ys)) x :< 
             (exitHook (`leftCont` ys) xi $ RequestInput "adjacent left" (\case
-                IRight -> \xs' -> (xs' `moveRight` ys)
+                IRight -> \xs' -> xs' `moveRight` ys
                 ILeft -> exit
                 IUp -> exit
-                _ -> \_ -> empty))
+                _ -> \xs' -> (Invalid, xs' `leftCont` ys)))
         where
-        exit = \xs' -> pure (Exit, xs' `leftCont` ys)
+        exit = \xs' -> (Delegate, xs' `leftCont` ys)
 
-    moveRight xs (y :< NoInput) = pure (Exit, Loc (PDLeft y) <$> xs)
-    moveRight xs (y :< yi) = (pure.(Continue,)) (xs `rightCont` (y :< yi))
+    moveRight xs (y :< NoInput) = (Delegate, Loc (PDLeft y) <$> xs)
+    moveRight xs (y :< yi) = (Continue, xs `rightCont` (y :< yi))
 
     xs `rightCont` (y :< NoInput) = Loc (PDLeft y) <$> xs
     xs `rightCont` (y :< yi) =
         Loc (PDRight (extract xs)) y :<
             (exitHook (xs `rightCont`) yi $ RequestInput "adjacent right" (\case
-                ILeft -> \ys' -> (xs `moveLeft` ys')
+                ILeft -> \ys' -> xs `moveLeft` ys'
                 IRight -> exit
                 IUp -> exit
-                _ -> \_ -> empty))
+                _ -> \ys' -> (Invalid, xs `rightCont` ys')))
         where
-        exit = \ys' -> pure (Exit, xs `leftCont` ys')
+        exit = \ys' -> (Delegate, xs `leftCont` ys')
     
-    moveLeft (x :< NoInput) ys = pure (Exit, Loc (PDRight x) <$> ys)
-    moveLeft (x :< xi) ys = (pure.(Continue,)) ((x :< xi) `leftCont` ys)
+    moveLeft (x :< NoInput) ys = (Delegate, Loc (PDRight x) <$> ys)
+    moveLeft (x :< xi) ys = (Continue, (x :< xi) `leftCont` ys)
 
 
 data PDLevel a x where
@@ -159,17 +150,18 @@ level :: (NavInput i) => Nav i a -> Nav i (Loc (PDLevel a))
 level (Nav n) = Nav (outsideCont n)
     where
     outsideCont (x :< xi) = Loc PDOutside x :< InputHook (RequestInput "level outside" (\case
-        IDown | InputHook{} <- xi -> (pure.(Continue,)) (insideCont (x :< xi))
+        IDown | InputHook{} <- xi -> (Continue, insideCont (x :< xi))
         ILeft -> exit
         IRight -> exit
         IUp -> exit
-        _ -> empty))
+        _ -> (Invalid, curstate)))
         where
-        exit = pure (Exit, outsideCont (x :< xi))
+        exit = (Delegate, curstate)
+        curstate = outsideCont (x :< xi)
     insideCont (x :< xi) = Loc PDInside x :< 
         (exitHook insideCont xi $ RequestInput "level outer" (\case
-            IUp -> \xs' -> (pure.(Continue,)) (outsideCont xs')
-            _ -> \_ -> empty))
+            IUp -> \xs' -> (Continue, outsideCont xs')
+            _ -> \_ -> (Invalid, insideCont (x :< xi))))
 
 levelFocus :: (a -> a) -> Loc (PDLevel (Focusable a)) -> Focusable a
 levelFocus inFocus (Loc PDOutside x) Focused = inFocus (x Unfocused)
@@ -230,8 +222,8 @@ simNav = go . runNav
                             "down" -> Just IDown
                             [c] -> Just (IChar c)
                             _ -> Nothing
-                case join $ fmap ih inp of
-                    Nothing -> putStrLn "invalid" >> go (x :< xs)
-                    Just (Exit, _) -> putStrLn "exited"
+                case fmap ih inp of
+                    Just (Delegate, _) -> putStrLn "exited"
                     Just (Continue, a) -> go a
+                    _ -> putStrLn "invalid" >> go (x :< xs)
             _ -> error "impossible"
