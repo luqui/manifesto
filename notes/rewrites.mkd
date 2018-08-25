@@ -1,0 +1,123 @@
+I'm thiking about edits finally.  There is an idea about edits that seems so
+obvious there's hardly anything else worth exploring, that is, tree rewrites.
+
+    Rewrite a = a -> Maybe a
+
+Using our defined grammar, we could construct a rewrite parser that allows any
+focus to be replaced by a metavariable.  Then at any level of the tree we can
+apply the rewrite, e.g.
+
+    \x. x {Foo (Bar x)}
+    :rewrite `a `b -> `b
+    \x. x {Bar x}
+
+Not all rewrites need to be expressible so simply (though parsing more complex
+ones might be a different challenge, or we could just do it in Haskell; I'd like
+to make a language about it though).  We could imagine a rewrite that eta
+contracts:
+
+    {\x. Foo (Bar x)}
+    :eta
+    Foo . Bar
+
+    {\x. Foo x (Bar x)}
+    :eta
+    <fail>
+
+    {\x. Foo x (Bar x)}
+    :pointfree
+    Foo <*> Bar
+
+Yeah there are some fucking cool possibilities here.  For truly general `:eta`
+and `:pointfree` we would need to make sure `.` and `<*>` are in scope, maybe
+requiring imports and things.  These would be nonlocal rewrites.  If rewrites
+had access to the context we might, in principle, be able to do this.  It's too
+much for now though; baby steps.
+
+But local rewrites at least seem like the way to go for most basic editor
+operations, except code entry.  And even then we could imagine a parser
+generating rewrites on holes, I'm not sure what is to be gained by that though.
+
+I can't quite see how to integrate rewrites into the existing `Nav` system.  The
+challenges are
+
+* Where do we get a rewrite parser for the local expression type?
+  * We could generate a `RewriteParser :*: Nav`, and then tie them together when
+    constructing the `Nav`'s focus.
+* When a rewrite is executed, how do we generate the resulting `Nav`? 
+  * The existing structure makes it hard to separate these concerns.  The most
+    obvious path forward is to do the rewrite on the AST, then use the
+    `Editor` to re-unparse the AST into its resulting `Nav`.
+* How do we access the AST part of the `Nav`?  Is that something that the `Nav`
+  should know about, or maybe that's the responsibility of the generated editor.
+
+Maybe `focus` takes a data structure of edits:
+
+    focus :: Input (a -> g a) -> g a -> g a
+
+That's not too bad.  When a particular edit is tried, we replace the current
+`Nav` with the generated one.  Since this is a method, we can express
+re-unparsing in the `a -> g a` part, since we have access to the current grammar
+at that point.  Now we need a concept of `Input` as part of `Syntax`; I suppose
+that was inevitable.
+
+I came into today thinking we needed to reinvent zippers.  I don't see it;
+that's nice.  But nonlocal edits might need them still; how do you look at your
+context?  You can keep whatever parts of the contexts you need along with you in
+the values of the `Nav`; maybe a context shows up there in the "unflattened" case
+where you keep everything you can.  It feels like maybe a context is the "initial
+algebra" of the contextual information, which I'm currently conceiving of as
+more specific contextual information, such as variables-in-scope.  What is the
+most general possible context you can have?
+
+Contextual/inherited information gets passed "down" the tree, that is to say, it
+is contravariant.  So when we have a constructor like `Lambda` with context type
+`a`, with a sub `Exp` with context type `b`, we need an `a -> b` to transform
+the context. If it were synthesized information, which gets passed "up" the
+tree, we would need a `b -> a`.  So in general, AG information is `p inh syn`,
+for some profunctor `p`.
+
+Let's try to make this formal.  Let's say we have a base functor
+
+    data ExpF a
+      = Lambda Name a
+      | App a a
+      | Var Name
+
+The initial algebra for `ExpF` is a type `Exp` and a function `f :: ExpF Exp ->
+Exp`, such that if we have another type `B` and `g :: ExpF B -> B`, then there
+is a unique function `cata g :: Exp -> B` with `g . fmap (cata g) = cata g . f`.
+
+    cata g (Lambda n e) = g (Lambda n (cata g e))
+    cata g (App e e') = g (App (cata g e) (cata g e'))
+    cata g (Var n) = g (Var n)
+
+If `B` is a function type, then `g` could look like
+
+    g (Lambda n e) c = lambdaC c n (e (LambdaArg c n))
+    g (App a b) c = let b' = b (AppR c a')
+                        a' = a (AppL c b')
+                    in a' `appC c` b'
+    g (Var n) c = varC c n
+
+What I'm after is the data type `I` that includes `LambdaArg`, `AppL`, etc.,
+formally. 
+
+    lambdaC :: I -> Name -> S -> S
+    appC :: I -> S -> S -> S
+    varC :: I -> Name -> S
+
+    LambdaArg :: I -> Name -> I
+    AppL :: I -> S -> I
+    AppR :: I -> S -> I
+
+Compare with the initial algebra specialized to `I -> S`:
+
+    LambdaC :: Name -> (I -> S) -> I -> S
+    AppC  :: (I -> S) -> (I -> S) -> I -> S
+    VarC  :: Name -> I -> S
+
+It's almost exactly the same as the lowercase constructors above, except that
+there are extra `(I ->)`s with any contravariant `S`s.  We want to know exactly
+what kinds of functions those `(I -> S)`s can be.
+
