@@ -61,6 +61,14 @@ re-unparsing in the `a -> g a` part, since we have access to the current grammar
 at that point.  Now we need a concept of `Input` as part of `Syntax`; I suppose
 that was inevitable.
 
+(Later: thinking
+
+    focus :: (a -> f a) -> g a -> g a
+
+instead. Not sure if `f` is associated or parameterized.  Anyway then we can
+have `f` perform rewrites or match searches or whatever we need.  Will be
+exposed through `Nav` as `Nav -> f Nav`.)
+
 I came into today thinking we needed to reinvent zippers.  I don't see it;
 that's nice.  But nonlocal edits might need them still; how do you look at your
 context?  You can keep whatever parts of the contexts you need along with you in
