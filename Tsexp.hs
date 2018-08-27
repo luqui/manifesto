@@ -7,14 +7,18 @@ import Data.Functor.Identity
 
 type Shape h = (Differentiable h, Serial h)
 
+-- A generalized version of `h (Tsexp f) -> f (Tsexp f s)`, which also works,
+-- but I think this form captures the spirit of the cast argument better.
+type Cast h f s = forall i. h i -> f (i s)
+
 data Tsexp f s where
-    Tsexp :: (Shape h) => (h (Tsexp f) -> f (Tsexp f s)) -> h (Tsexp f) -> Tsexp f s
+    Tsexp :: (Shape h) => Cast h f s -> h (Tsexp f) -> Tsexp f s
 -- The first argument here is the "cast", and it is in principle associated
 -- with the shape alone -- the "data" of the node is all in the second
 -- argument.
 
 data Context1 f s s' where
-    Context1 :: (Shape h) => (h (Tsexp f) -> f (Tsexp f s)) -> D h (Tsexp f) s' -> Context1 f s s'
+    Context1 :: (Shape h) => Cast h f s -> D h (Tsexp f) s' -> Context1 f s s'
 
 data Context f a b where
     CNil  :: Context f a a
