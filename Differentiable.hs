@@ -1,3 +1,4 @@
+{-# OPTIONS -Wall #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -11,9 +12,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Differentiable where
-
-import Data.Functor.Identity
-import Data.List (tails)
 
 -- Let's say we have an normal expression type like this
 
@@ -37,101 +35,67 @@ type Program = [Defn]
 -- on the context stack, the next level down will be a list context, and the
 -- next a Defn context.
 
-data Loc h a = Loc (D h a) a
-deriving instance (Show (D h a), Show a) => Show (Loc h a)
+data Loc h f a = Loc (D h f a) (f a)
 
 class HFunctor h where
     hfmap :: (forall x. f x -> g x) -> h f -> h g
 
 class (HFunctor h) => Differentiable h where
-    data D h :: * -> *
-    toFrames :: h Identity -> h (Loc h)
-    fillHole :: Loc h a -> h Identity
+    data D h :: (* -> *) -> * -> *
+    toFrames :: h f -> h (Loc h f)
+    fillHole :: Loc h f a -> h f
 
-class (HFunctor (Base a)) => Repr a where
-    type Base a :: (* -> *) -> *
-    toBase :: a -> Base a Identity
-    fromBase :: Base a Identity -> a
-
-data Context a b where
-    Empty :: Context a a
-    Cons :: D (Base a) b -> Context b c -> Context a c
+class (HFunctor h) => Serial h where
+    constToList :: h (Const b) -> [b]
 
 
-instance Repr () where
-    type Base () = Field ()
-    toBase () = Field (Identity ())
-    fromBase (Field (Identity ())) = ()
-
-instance Repr Integer where
-    type Base Integer = Field Integer
-    toBase z = Field (Identity z)
-    fromBase (Field (Identity z)) = z
-
-instance (Repr a, Repr b) => Repr (a,b) where
-    type Base (a,b) = Base a :*: Base b
-    toBase (a,b) = HPair (toBase a) (toBase b)
-    fromBase (HPair a b) = (fromBase a, fromBase b)
-
-
-instance Repr (Either a b) where
-    type Base (Either a b) = Const a :+: Const b
-    toBase (Left x) = HLeft (Const x)
-    toBase (Right x) = HRight (Const x)
-    fromBase (HLeft (Const x)) = Left x
-    fromBase (HRight (Const x)) = Right x
-
-
--- Another approach to compositionality.
 
 newtype Field a f = Field { getField :: f a }
-    deriving (Show)
 
 instance HFunctor (Field a) where
     hfmap f (Field x) = Field (f x)
 
-instance Differentiable (Field a) where
-    data D (Field a) x where
-        DField :: D (Field a) a
-    toFrames (Field (Identity x)) = Field (Loc DField x)
-    fillHole (Loc DField x) = Field (Identity x)
+instance Serial (Field a) where
+    constToList (Field (Const a)) = [a]
 
-deriving instance Show (D (Field a) x)
+instance Differentiable (Field a) where
+    data D (Field a) f x where
+        DField :: D (Field a) f a
+    toFrames (Field x) = Field (Loc DField x)
+    fillHole (Loc DField x) = Field x
 
 
 newtype Const a f = Const { getConst :: a }
-    deriving (Show)
 
 instance HFunctor (Const a) where
     hfmap _ (Const x) = Const x
 
 instance Differentiable (Const a) where
-    data D (Const a) x
+    data D (Const a) f x
     toFrames (Const x) = Const x
     fillHole (Loc cx _) = case cx of {}
 
-deriving instance Show (D (Const a) x)
+instance Serial (Const a) where
+    constToList (Const _) = []
 
 
 data (h :*: h') f = HPair (h f) (h' f)
-    deriving (Show)
 
 instance (HFunctor h, HFunctor h') => HFunctor (h :*: h') where
     hfmap f (HPair x y) = HPair (hfmap f x) (hfmap f y)
 
 instance (Differentiable h, Differentiable h') => Differentiable (h :*: h') where
-    data D (h :*: h') x where
-        DProductL :: D h x -> h' Identity -> D (h :*: h') x
-        DProductR :: h Identity -> D h' x -> D (h :*: h') x
+    data D (h :*: h') f x where
+        DProductL :: D h f x -> h' f -> D (h :*: h') f x
+        DProductR :: h f -> D h' f x -> D (h :*: h') f x
     toFrames (HPair x y) = 
         HPair (hfmap (\(Loc c a) -> Loc (DProductL c y) a) (toFrames x))
               (hfmap (\(Loc c a) -> Loc (DProductR x c) a) (toFrames y))
     fillHole (Loc (DProductL c y) a) = HPair (fillHole (Loc c a)) y
     fillHole (Loc (DProductR x c) a) = HPair x (fillHole (Loc c a))
 
-deriving instance 
-    (Show (D h x), Show (D h' x), Show (h Identity), Show (h' Identity)) 
-    => Show (D (h :*: h') x)
+instance (Serial h, Serial h') => Serial (h :*: h') where
+    constToList (HPair a b) = constToList a ++ constToList b
 
 data (h :+: h') f = HLeft (h f) | HRight (h' f)
 
@@ -140,15 +104,17 @@ instance (HFunctor h, HFunctor h') => HFunctor (h :+: h') where
     hfmap f (HRight x) = HRight (hfmap f x)
 
 instance (Differentiable h, Differentiable h') => Differentiable (h :+: h') where
-    data D (h :+: h') x where
-        DHLeft :: D h x -> D (h :+: h') x
-        DHRight :: D h' x -> D (h :+: h') x
+    data D (h :+: h') f x where
+        DHLeft :: D h f x -> D (h :+: h') f x
+        DHRight :: D h' f x -> D (h :+: h') f x
     toFrames (HLeft x) = HLeft (hfmap (\(Loc c a) -> Loc (DHLeft c) a) (toFrames x))
     toFrames (HRight x) = HRight (hfmap (\(Loc c a) -> Loc (DHRight c) a) (toFrames x))
     fillHole (Loc (DHLeft c) a) = HLeft (fillHole (Loc c a))
     fillHole (Loc (DHRight c) a) = HRight (fillHole (Loc c a))
 
-deriving instance (Show (D h x), Show (D h' x)) => Show (D (h :+: h') x)
+instance (Serial h, Serial h') => Serial (h :+: h') where
+    constToList (HLeft a) = constToList a
+    constToList (HRight b) = constToList b
 
 {-
 
