@@ -3,12 +3,12 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 import Control.Arrow (first)
 import Data.Functor.Const (Const(..))
 import Data.Monoid (Dual(..))
 import Data.Constraint (Dict(..))
-import Data.Proxy (Proxy(..))
 
 import Differentiable
 
@@ -55,8 +55,8 @@ down (Zipper cx (Tsexp cast dat)) =
 siblings :: Zipper f a -> ([Zipper f a], [Zipper f a])
 siblings (Zipper CNil _) = ([], [])
 siblings (Zipper (CCons cx (Context1 (cast :: Cast h f a) d :: Context1 f a b)) e) 
-  | Dict <- higherD (Proxy :: Proxy '(h,b))
-    = first getDual . foldConstD (Proxy :: Proxy '(h,b)) (Dual . (:[])) (:[]) $ 
+  | Dict <- higherD @h @b
+    = first getDual . foldConstD (Dual . (:[])) (:[]) $ 
         hfmap (\loc -> Const (Zipper (CCons cx (Context1 cast (fillHole loc))) e))
               (toFrames d)
 
