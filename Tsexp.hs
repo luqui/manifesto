@@ -4,21 +4,21 @@
 
 import Differentiable
 import Data.Functor.Identity
-
-type Shape h = (Differentiable h, Serial h)
+import Control.Arrow (first)
+import Data.Monoid (Dual(..))
 
 -- A generalized version of `h (Tsexp f) -> f (Tsexp f s)`, which also works,
 -- but I think this form captures the spirit of the cast argument better.
 type Cast h f s = forall i. h i -> f (i s)
 
 data Tsexp f s where
-    Tsexp :: (Shape h) => Cast h f s -> h (Tsexp f) -> Tsexp f s
+    Tsexp :: (Serial h) => Cast h f s -> h (Tsexp f) -> Tsexp f s
 -- The first argument here is the "cast", and it is in principle associated
 -- with the shape alone -- the "data" of the node is all in the second
 -- argument.
 
-data Context1 f s s' where
-    Context1 :: (Shape h) => Cast h f s -> D h (Tsexp f) s' -> Context1 f s s'
+data Context1 f a b  where
+    Context1 :: (Serial h) => Cast h f a -> D h (Tsexp f) b -> Context1 f a b
 
 data Context f a b where
     CNil  :: Context f a a
@@ -43,7 +43,7 @@ up (Zipper (CCons cx cx1) e) = Just (Zipper cx (fillContext1 cx1 e))
 
 down :: Zipper f a -> [Zipper f a]
 down (Zipper cx (Tsexp cast dat)) = 
-    constToList $
+    foldConst (:[]) $
         hfmap (\(Loc d e) -> Const (Zipper (CCons cx (Context1 cast d)) e)) 
               (toFrames dat)
 

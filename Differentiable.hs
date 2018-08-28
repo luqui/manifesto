@@ -13,41 +13,25 @@
 
 module Differentiable where
 
--- Let's say we have an normal expression type like this
-
-newtype Name = Name String
-
-data Defn
-    = Defn Name Exp
-
-data Exp
-    = ELambda Name Exp
-    | EApp Exp Exp
-    | EVar Name
-    | ELet [Defn] Exp
-
-type Program = [Defn]
-
--- We want to be able to pull each of these apart, in such a way that we can
--- construct a context frame and "see" the types of subexpressions.
-
--- In particular, we have to have a type-changing context; e.g. when ELet_1 is
--- on the context stack, the next level down will be a list context, and the
--- next a Defn context.
+import Control.Arrow (first, second)
 
 data Loc h f a = Loc (D h f a) (f a)
 
 class HFunctor h where
     hfmap :: (forall x. f x -> g x) -> h f -> h g
 
-class (HFunctor h) => Differentiable h where
+class HFunctor1 h where
+    hfmap1 :: (forall x. f x -> g x) -> h f a -> h g a
+
+class (HFunctor h, HFunctor1 (D h)) => Differentiable h where
     data D h :: (* -> *) -> * -> *
     toFrames :: h f -> h (Loc h f)
     fillHole :: Loc h f a -> h f
 
-class (HFunctor h) => Serial h where
-    constToList :: h (Const b) -> [b]
-
+-- A "Serial" is a differentiable functor whose holes are "in order"
+class (Differentiable h) => Serial h where
+    foldConst :: (Monoid m) => (b -> m) -> h (Const b) -> m
+    foldConstD :: (Monoid m, Monoid n) => (b -> m) -> (b -> n) -> D h (Const b) x -> (m,n)
 
 
 newtype Field a f = Field { getField :: f a }
@@ -55,14 +39,18 @@ newtype Field a f = Field { getField :: f a }
 instance HFunctor (Field a) where
     hfmap f (Field x) = Field (f x)
 
-instance Serial (Field a) where
-    constToList (Field (Const a)) = [a]
-
 instance Differentiable (Field a) where
     data D (Field a) f x where
         DField :: D (Field a) f a
     toFrames (Field x) = Field (Loc DField x)
     fillHole (Loc DField x) = Field x
+
+instance HFunctor1 (D (Field a)) where
+    hfmap1 _ DField = DField
+
+instance Serial (Field a) where
+    foldConst f (Field (Const a)) = f a
+    foldConstD _ _ DField = (mempty, mempty)
 
 
 newtype Const a f = Const { getConst :: a }
@@ -75,9 +63,12 @@ instance Differentiable (Const a) where
     toFrames (Const x) = Const x
     fillHole (Loc cx _) = case cx of {}
 
-instance Serial (Const a) where
-    constToList (Const _) = []
+instance HFunctor1 (D (Const a)) where
+    hfmap1 _ e = case e of {}
 
+instance Serial (Const a) where
+    foldConst _ (Const _) = mempty
+    foldConstD _ _ dc = case dc of {}
 
 data (h :*: h') f = HPair (h f) (h' f)
 
@@ -94,8 +85,14 @@ instance (Differentiable h, Differentiable h') => Differentiable (h :*: h') wher
     fillHole (Loc (DProductL c y) a) = HPair (fillHole (Loc c a)) y
     fillHole (Loc (DProductR x c) a) = HPair x (fillHole (Loc c a))
 
+instance (Differentiable h, Differentiable h') => HFunctor1 (D (h :*: h')) where
+    hfmap1 f (DProductL d r) = DProductL (hfmap1 f d) (hfmap f r)
+    hfmap1 f (DProductR l d) = DProductR (hfmap f l) (hfmap1 f d)
+
 instance (Serial h, Serial h') => Serial (h :*: h') where
-    constToList (HPair a b) = constToList a ++ constToList b
+    foldConst f (HPair a b) = foldConst f a <> foldConst f b
+    foldConstD f g (DProductL d r) = second (<> foldConst g r) (foldConstD f g d)
+    foldConstD f g (DProductR l d) = first (foldConst f l <>) (foldConstD f g d)
 
 data (h :+: h') f = HLeft (h f) | HRight (h' f)
 
@@ -112,73 +109,13 @@ instance (Differentiable h, Differentiable h') => Differentiable (h :+: h') wher
     fillHole (Loc (DHLeft c) a) = HLeft (fillHole (Loc c a))
     fillHole (Loc (DHRight c) a) = HRight (fillHole (Loc c a))
 
+instance (Differentiable h, Differentiable h') => HFunctor1 (D (h :+: h')) where
+    hfmap1 f (DHLeft d) = DHLeft (hfmap1 f d)
+    hfmap1 f (DHRight d) = DHRight (hfmap1 f d)
+
 instance (Serial h, Serial h') => Serial (h :+: h') where
-    constToList (HLeft a) = constToList a
-    constToList (HRight b) = constToList b
+    foldConst f (HLeft a) = foldConst f a
+    foldConst f (HRight b) = foldConst f b
 
-{-
-
--- All boilerplate.
-instance Node Defn where
-    data Frame Defn t where
-        DefnF1 :: Exp -> Frame Defn Name
-        DefnF2 :: Name -> Frame Defn Exp
-    data Base Defn f where
-        DefnB :: f Name -> f Exp -> Base Defn f
-
-    toBase (Defn n e) = DefnB (Identity n) (Identity e)
-    fromBase (DefnB (Identity n) (Identity e)) = Defn n e
-    toFrames (Defn n e) = DefnB (Loc (DefnF1 e) n) (Loc (DefnF2 n) e)
-    fillHole (Loc (DefnF1 e) n) = Defn n e
-    fillHole (Loc (DefnF2 n) e) = Defn n e
-
-instance HFunctor (Base Defn) where
-    hfmap f (DefnB n e) = DefnB (f n) (f e)
-
-instance Node () where
-    data Frame () t where
-    data Base () f where
-        UnitB :: Base () f
-
-    toBase () = UnitB
-    fromBase UnitB = ()
-    toFrames () = UnitB
-    fillHole (Loc cx _) = case cx of {}
-    
-instance HFunctor (Base ()) where
-    hfmap _ UnitB = UnitB
-
-instance Node (Maybe a) where
-    data Frame (Maybe a) t where
-        JustF :: Frame (Maybe a) a
-    data Base (Maybe a) f where
-        MaybeB :: Maybe (f a) -> Base (Maybe a) f
-
-    toBase m = MaybeB (Identity <$> m)
-    fromBase (MaybeB m) = runIdentity <$> m
-    toFrames Nothing = MaybeB Nothing
-    toFrames (Just x) = MaybeB (Just (Loc JustF x))
-    fillHole (Loc JustF x) = Just x
-
-instance HFunctor (Base (Maybe a)) where
-    hfmap f (MaybeB m) = MaybeB (fmap f m)
-
-
-instance Node [a] where
-    data Frame [a] t where
-        ListF :: [a] -> [a] -> Frame [a] a
-    data Base [a] f where
-        ListB :: [f a] -> Base [a] f
-
-    toBase xs = ListB (map Identity xs)
-    fromBase (ListB xs) = map runIdentity xs
-    toFrames xs = ListB $ do
-        (pre, x:post) <- zip (tails (reverse xs)) (tails xs) 
-        return $ Loc (ListF pre post) x
-    fillHole (Loc (ListF pre post) x) = reverse pre ++ [x] ++ post
-
-instance HFunctor (Base [a]) where
-    hfmap f (ListB xs) = ListB (map f xs)
-
-
--}
+    foldConstD f g (DHLeft a) = foldConstD f g a
+    foldConstD f g (DHRight a) = foldConstD f g a
