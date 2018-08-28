@@ -47,5 +47,12 @@ down (Zipper cx (Tsexp cast dat)) =
         hfmap (\(Loc d e) -> Const (Zipper (CCons cx (Context1 cast d)) e)) 
               (toFrames dat)
 
+siblings :: Zipper f a -> ([Zipper f a], [Zipper f a])
+siblings (Zipper CNil _) = ([], [])
+siblings (Zipper (CCons cx (Context1 cast d)) exp) = 
+    foldConstD (:[]) (:[]) $ 
+        hfmap (\loc -> Const (Zipper (CCons cx (Context1 cast (fillHole loc))) exp))
+              (toFrames d)
+
 observe :: (Functor f) => Zipper f a -> f (Zipper f a)
 observe (Zipper cx (Tsexp cast dat)) = Zipper cx <$> cast dat
