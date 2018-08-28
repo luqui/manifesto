@@ -1,17 +1,16 @@
-{-# LANGUAGE ConstraintKinds #-}
+{-# OPTIONS -Wall #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-import Differentiable
-import Data.Functor.Const
-import Data.Functor.Identity
 import Control.Arrow (first)
+import Data.Functor.Const (Const(..))
 import Data.Monoid (Dual(..))
 import Data.Constraint (Dict(..))
-import Data.Proxy
+import Data.Proxy (Proxy(..))
+
+import Differentiable
 
 -- A generalized version of `h (Tsexp f) -> f (Tsexp f s)`, which also works,
 -- but I think this form captures the spirit of the cast argument better.
@@ -55,10 +54,10 @@ down (Zipper cx (Tsexp cast dat)) =
 
 siblings :: Zipper f a -> ([Zipper f a], [Zipper f a])
 siblings (Zipper CNil _) = ([], [])
-siblings (Zipper (CCons cx (Context1 (cast :: Cast h f a) d :: Context1 f a b)) exp) 
+siblings (Zipper (CCons cx (Context1 (cast :: Cast h f a) d :: Context1 f a b)) e) 
   | Dict <- higherD (Proxy :: Proxy '(h,b))
-    = foldConstD (Proxy :: Proxy '(h,b)) (:[]) (:[]) $ 
-        hfmap (\loc -> Const (Zipper (CCons cx (Context1 cast (fillHole loc))) exp))
+    = first getDual . foldConstD (Proxy :: Proxy '(h,b)) (Dual . (:[])) (:[]) $ 
+        hfmap (\loc -> Const (Zipper (CCons cx (Context1 cast (fillHole loc))) e))
               (toFrames d)
 
 observe :: (Functor f) => Zipper f a -> f (Zipper f a)

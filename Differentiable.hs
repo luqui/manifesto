@@ -1,22 +1,12 @@
 {-# OPTIONS -Wall #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyCase #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE PartialTypeSignatures #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
 
 module Differentiable where
 
@@ -112,16 +102,17 @@ instance (Differentiable h, Differentiable h') => Differentiable (h :*: h') wher
     fillHole (Loc (HLeft (HPair c y)) a) = HPair (fillHole (Loc c a)) y
     fillHole (Loc (HRight (HPair x c)) a) = HPair x (fillHole (Loc c a))
     
-    higherD :: forall proxy x. proxy '(h :*: h',x) -> Dict (Differentiable (D (h :*: h') x))
-    higherD _ | Dict <- higherD (Proxy :: Proxy '(h,x))
-              , Dict <- higherD (Proxy :: Proxy '(h',x))
+    higherD (_ :: proxy '(h :*: h',x)) 
+        | Dict <- higherD (Proxy :: Proxy '(h,x))
+        , Dict <- higherD (Proxy :: Proxy '(h',x))
         = Dict
 
 instance (Serial h, Serial h') => Serial (h :*: h') where
     foldConst f (HPair x y) = foldConst f x <> foldConst f y
-    foldConstD :: forall m n proxy x b. (Monoid m, Monoid n) => proxy '(h :*: h',x) -> (b -> m) -> (b -> n) -> D (h :*: h') x (Const b) -> (m,n)
-    foldConstD _ f g (HLeft (HPair d r)) = second (<> foldConst g r) (foldConstD (Proxy :: Proxy '(h,x)) f g d)
-    foldConstD _ f g (HRight (HPair l d)) = first (foldConst f l <>) (foldConstD (Proxy :: Proxy '(h',x)) f g d)
+    foldConstD (_ :: proxy '(h :*: h', x)) f g (HLeft (HPair d r)) 
+        = second (<> foldConst g r) (foldConstD (Proxy :: Proxy '(h,x)) f g d)
+    foldConstD (_ :: proxy '(h :*: h', x)) f g (HRight (HPair l d)) 
+        = first (foldConst f l <>) (foldConstD (Proxy :: Proxy '(h',x)) f g d)
     
 
 
@@ -138,9 +129,9 @@ instance (Differentiable h, Differentiable h') => Differentiable (h :+: h') wher
     fillHole (Loc (HLeft c) a) = HLeft (fillHole (Loc c a))
     fillHole (Loc (HRight c) a) = HRight (fillHole (Loc c a))
 
-    higherD :: forall proxy x. proxy '(h :+: h',x) -> Dict (Differentiable (D (h :+: h') x))
-    higherD _ | Dict <- higherD (Proxy :: Proxy '(h,x))
-              , Dict <- higherD (Proxy :: Proxy '(h',x))
+    higherD (_ :: proxy '(h :+: h', x)) 
+        | Dict <- higherD (Proxy :: Proxy '(h,x))
+        , Dict <- higherD (Proxy :: Proxy '(h',x))
         = Dict
 
 instance (Serial h, Serial h') => Serial (h :+: h') where
@@ -148,7 +139,8 @@ instance (Serial h, Serial h') => Serial (h :+: h') where
     foldConst f (HRight b) = foldConst f b
 
 
-    foldConstD :: forall m n proxy x b. (Monoid m, Monoid n) => proxy '(h :+: h',x) -> (b -> m) -> (b -> n) -> D (h :+: h') x (Const b) -> (m,n)
-    foldConstD _ f g (HLeft a) = foldConstD (Proxy :: Proxy '(h,x)) f g a
-    foldConstD _ f g (HRight a) = foldConstD (Proxy :: Proxy '(h',x)) f g a
+    foldConstD (_ :: proxy '(h :+: h', x)) f g (HLeft a) 
+        = foldConstD (Proxy :: Proxy '(h,x)) f g a
+    foldConstD (_ :: proxy '(h :+: h', x)) f g (HRight a) 
+        = foldConstD (Proxy :: Proxy '(h',x)) f g a
 
