@@ -4,6 +4,10 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -17,37 +21,27 @@
 module Differentiable where
 
 import Control.Arrow (first, second)
-import Data.Constraint.Forall
-import Data.Constraint ((:-)(..), Dict(..))
+import Data.Constraint (Dict(..))
+import Data.Functor.Const (Const(..))
+import Data.Proxy (Proxy(..))
 
-
-data NatIso f g = NatIso (forall x. f x -> g x) (forall x. g x -> f x)
-
-inverse :: NatIso f g -> NatIso g f
-inverse (NatIso f g) = NatIso g f
-
-apply :: NatIso f g -> f x -> g x
-apply (NatIso f _) = f
 
 data Loc h f x = Loc (D h x f) (f x)
 
 class HFunctor h where
     hfmap :: (forall x. f x -> g x) -> h f -> h g
 
-class (HFunctor h, ForallF HFunctor (D h)) => Differentiable h where
-    data D h :: * -> (* -> *) -> *
+class (HFunctor h) => Differentiable h where
+    type D h x :: (* -> *) -> *
     toFrames :: h f -> h (Loc h f)
     fillHole :: Loc h f a -> h f
 
-    -- Provide an alternative representation for the derivative, which is
-    -- itself differentiable.  This is so we can do higher-order derivatives
-    -- without getting the constraint system all in a bundle.
-    derivIso :: (forall t. Differentiable t => NatIso (D h x) t -> r) -> r
+    higherD :: proxy '(h,x) -> Dict (Differentiable (D h x))
 
 -- A "Serial" is a differentiable functor whose holes are "in order"
 class (Differentiable h) => Serial h where
     foldConst :: (Monoid m) => (b -> m) -> h (Const b) -> m
-    foldConstD :: (Monoid m, Monoid n) => (b -> m) -> (b -> n) -> D h x (Const b) -> (m,n)
+    foldConstD :: (Monoid m, Monoid n) => proxy '(h,x) -> (b -> m) -> (b -> n) -> D h x (Const b) -> (m,n)
 
 
 newtype Field a f = Field { getField :: f a }
@@ -56,35 +50,54 @@ instance HFunctor (Field a) where
     hfmap f (Field x) = Field (f x)
 
 instance Differentiable (Field a) where
-    data D (Field a) x f where
-        DField :: D (Field a) a f
+    type D (Field a) x = DField a x
     toFrames (Field x) = Field (Loc DField x)
     fillHole (Loc DField x) = Field x
-
-instance HFunctor (D (Field a) x) where
-    hfmap _ DField = DField
+    higherD _ = Dict
 
 instance Serial (Field a) where
     foldConst f (Field (Const a)) = f a
-    foldConstD _ _ DField = (mempty, mempty)
+    foldConstD _ _ _ DField = (mempty, mempty)
 
 
-newtype Const a f = Const { getConst :: a }
+data DField a x f where
+    DField :: DField a a f
+
+instance HFunctor (DField a x) where
+    hfmap _ DField = DField
+
+instance Differentiable (DField a x) where
+    type D (DField a x) y = HVoid
+    toFrames DField = DField
+    fillHole (Loc v _) = case v of {}
+    higherD _ = Dict
+
+
+data HVoid f
+
+instance HFunctor HVoid where
+    hfmap _ v = case v of {}
+
+instance Differentiable HVoid where
+    type D HVoid x = HVoid
+    toFrames v = case v of {}
+    fillHole (Loc v _) = case v of {}
+    higherD _ = Dict
+    
 
 instance HFunctor (Const a) where
     hfmap _ (Const x) = Const x
 
 instance Differentiable (Const a) where
-    data D (Const a) x f
+    type D (Const a) x = HVoid
     toFrames (Const x) = Const x
     fillHole (Loc cx _) = case cx of {}
-
-instance HFunctor (D (Const a) x) where
-    hfmap _ e = case e of {}
+    higherD _ = Dict
 
 instance Serial (Const a) where
     foldConst _ (Const _) = mempty
-    foldConstD _ _ dc = case dc of {}
+    foldConstD _ _ _ dc = case dc of {}
+
 
 data (h :*: h') f = HPair (h f) (h' f)
 
@@ -92,25 +105,25 @@ instance (HFunctor h, HFunctor h') => HFunctor (h :*: h') where
     hfmap f (HPair x y) = HPair (hfmap f x) (hfmap f y)
 
 instance (Differentiable h, Differentiable h') => Differentiable (h :*: h') where
-    data D (h :*: h') x f where
-        DProductL :: D h x f -> h' f -> D (h :*: h') x f
-        DProductR :: h f -> D h' x f -> D (h :*: h') x f
+    type D (h :*: h') x = (D h x :*: h') :+: (h :*: D h' x)
     toFrames (HPair x y) = 
-        HPair (hfmap (\(Loc c a) -> Loc (DProductL c y) a) (toFrames x))
-              (hfmap (\(Loc c a) -> Loc (DProductR x c) a) (toFrames y))
-    fillHole (Loc (DProductL c y) a) = HPair (fillHole (Loc c a)) y
-    fillHole (Loc (DProductR x c) a) = HPair x (fillHole (Loc c a))
-
-instance (Differentiable h, Differentiable h') => HFunctor (D (h :*: h') x) where
-    hfmap f (DProductL d r) | Sub Dict <- instF @HFunctor @(D h) @x
-        = DProductL (hfmap f d) (hfmap f r)
-    hfmap f (DProductR l d) | Sub Dict <- instF @HFunctor @(D h') @x
-        = DProductR (hfmap f l) (hfmap f d)
+        HPair (hfmap (\(Loc c a) -> Loc (HLeft (HPair c y)) a) (toFrames x))
+              (hfmap (\(Loc c a) -> Loc (HRight (HPair x c)) a) (toFrames y))
+    fillHole (Loc (HLeft (HPair c y)) a) = HPair (fillHole (Loc c a)) y
+    fillHole (Loc (HRight (HPair x c)) a) = HPair x (fillHole (Loc c a))
+    
+    higherD :: forall proxy x. proxy '(h :*: h',x) -> Dict (Differentiable (D (h :*: h') x))
+    higherD _ | Dict <- higherD (Proxy :: Proxy '(h,x))
+              , Dict <- higherD (Proxy :: Proxy '(h',x))
+        = Dict
 
 instance (Serial h, Serial h') => Serial (h :*: h') where
-    foldConst f (HPair a b) = foldConst f a <> foldConst f b
-    foldConstD f g (DProductL d r) = second (<> foldConst g r) (foldConstD f g d)
-    foldConstD f g (DProductR l d) = first (foldConst f l <>) (foldConstD f g d)
+    foldConst f (HPair x y) = foldConst f x <> foldConst f y
+    foldConstD :: forall m n proxy x b. (Monoid m, Monoid n) => proxy '(h :*: h',x) -> (b -> m) -> (b -> n) -> D (h :*: h') x (Const b) -> (m,n)
+    foldConstD _ f g (HLeft (HPair d r)) = second (<> foldConst g r) (foldConstD (Proxy :: Proxy '(h,x)) f g d)
+    foldConstD _ f g (HRight (HPair l d)) = first (foldConst f l <>) (foldConstD (Proxy :: Proxy '(h',x)) f g d)
+    
+
 
 data (h :+: h') f = HLeft (h f) | HRight (h' f)
 
@@ -119,23 +132,23 @@ instance (HFunctor h, HFunctor h') => HFunctor (h :+: h') where
     hfmap f (HRight x) = HRight (hfmap f x)
 
 instance (Differentiable h, Differentiable h') => Differentiable (h :+: h') where
-    data D (h :+: h') x f where
-        DHLeft :: D h x f -> D (h :+: h') x f
-        DHRight :: D h' x f -> D (h :+: h') x f
-    toFrames (HLeft x) = HLeft (hfmap (\(Loc c a) -> Loc (DHLeft c) a) (toFrames x))
-    toFrames (HRight x) = HRight (hfmap (\(Loc c a) -> Loc (DHRight c) a) (toFrames x))
-    fillHole (Loc (DHLeft c) a) = HLeft (fillHole (Loc c a))
-    fillHole (Loc (DHRight c) a) = HRight (fillHole (Loc c a))
+    type D (h :+: h') x = D h x :+: D h' x
+    toFrames (HLeft x) = HLeft (hfmap (\(Loc c a) -> Loc (HLeft c) a) (toFrames x))
+    toFrames (HRight x) = HRight (hfmap (\(Loc c a) -> Loc (HRight c) a) (toFrames x))
+    fillHole (Loc (HLeft c) a) = HLeft (fillHole (Loc c a))
+    fillHole (Loc (HRight c) a) = HRight (fillHole (Loc c a))
 
-instance (Differentiable h, Differentiable h') => HFunctor (D (h :+: h') x) where
-    hfmap f (DHLeft d) | Sub Dict <- instF @HFunctor @(D h) @x
-        = DHLeft (hfmap f d)
-    hfmap f (DHRight d) | Sub Dict <- instF @HFunctor @(D h') @x
-        = DHRight (hfmap f d)
+    higherD :: forall proxy x. proxy '(h :+: h',x) -> Dict (Differentiable (D (h :+: h') x))
+    higherD _ | Dict <- higherD (Proxy :: Proxy '(h,x))
+              , Dict <- higherD (Proxy :: Proxy '(h',x))
+        = Dict
 
 instance (Serial h, Serial h') => Serial (h :+: h') where
     foldConst f (HLeft a) = foldConst f a
     foldConst f (HRight b) = foldConst f b
 
-    foldConstD f g (DHLeft a) = foldConstD f g a
-    foldConstD f g (DHRight a) = foldConstD f g a
+
+    foldConstD :: forall m n proxy x b. (Monoid m, Monoid n) => proxy '(h :+: h',x) -> (b -> m) -> (b -> n) -> D (h :+: h') x (Const b) -> (m,n)
+    foldConstD _ f g (HLeft a) = foldConstD (Proxy :: Proxy '(h,x)) f g a
+    foldConstD _ f g (HRight a) = foldConstD (Proxy :: Proxy '(h',x)) f g a
+
