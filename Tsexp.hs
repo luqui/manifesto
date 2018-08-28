@@ -18,7 +18,7 @@ data Tsexp f s where
 -- argument.
 
 data Context1 f a b  where
-    Context1 :: (Serial h) => Cast h f a -> D h (Tsexp f) b -> Context1 f a b
+    Context1 :: (Serial h) => Cast h f a -> D h b (Tsexp f) -> Context1 f a b
 
 data Context f a b where
     CNil  :: Context f a a
