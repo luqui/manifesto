@@ -20,6 +20,15 @@ import Control.Arrow (first, second)
 import Data.Constraint.Forall
 import Data.Constraint ((:-)(..), Dict(..))
 
+
+data NatIso f g = NatIso (forall x. f x -> g x) (forall x. g x -> f x)
+
+inverse :: NatIso f g -> NatIso g f
+inverse (NatIso f g) = NatIso g f
+
+apply :: NatIso f g -> f x -> g x
+apply (NatIso f _) = f
+
 data Loc h f x = Loc (D h x f) (f x)
 
 class HFunctor h where
@@ -29,6 +38,11 @@ class (HFunctor h, ForallF HFunctor (D h)) => Differentiable h where
     data D h :: * -> (* -> *) -> *
     toFrames :: h f -> h (Loc h f)
     fillHole :: Loc h f a -> h f
+
+    -- Provide an alternative representation for the derivative, which is
+    -- itself differentiable.  This is so we can do higher-order derivatives
+    -- without getting the constraint system all in a bundle.
+    derivIso :: (forall t. Differentiable t => NatIso (D h x) t -> r) -> r
 
 -- A "Serial" is a differentiable functor whose holes are "in order"
 class (Differentiable h) => Serial h where

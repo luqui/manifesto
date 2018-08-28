@@ -51,8 +51,10 @@ siblings :: Zipper f a -> ([Zipper f a], [Zipper f a])
 siblings (Zipper CNil _) = ([], [])
 siblings (Zipper (CCons cx (Context1 cast d)) exp) = 
     foldConstD (:[]) (:[]) $ 
-        hfmap (\loc -> Const (Zipper (CCons cx (Context1 cast (fillHole loc))) exp))
-              (toFrames d)
+        derivIso $ \iso -> 
+            apply (inverse iso) $
+                hfmap (\loc -> Const (Zipper (CCons cx (Context1 cast (apply (inverse iso) (fillHole loc)))) exp))
+                      (toFrames (apply iso d))
 
 observe :: (Functor f) => Zipper f a -> f (Zipper f a)
 observe (Zipper cx (Tsexp cast dat)) = Zipper cx <$> cast dat
