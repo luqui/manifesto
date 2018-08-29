@@ -15,9 +15,13 @@ import Data.Functor.Identity (Identity(..))
 
 import Differentiable
 
--- A generalized version of `h (Tsexp f) -> f (Tsexp f s)`, which also works,
--- but I think this form captures the spirit of the cast argument better.
-type Cast h f s = forall i. h (Compose f i) -> Compose f i s
+-- A cast takes the "surface observations" of the children and gives the
+-- surface observations of the parent.  The g is playing the role of keeping
+-- the observations surface, that is, making sure each observation is a pure
+-- composition of the observations of its children.  This allows the user of 
+-- a cast to "annotate" the children arbitrarily, having those annotations
+-- tracked through the cast.
+type Cast h f s = forall g. h (Compose f g) -> Compose f g s
 
 data Tsexp f s where
     Tsexp :: (Serial h) => Cast h f s -> h (Tsexp f) -> Tsexp f s
