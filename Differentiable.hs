@@ -37,32 +37,32 @@ class HFunctor h where
 
 class (HFunctor h) => Differentiable h where
     type DImpl h (x :: k) :: (k -> *) -> *
-    toFrames :: h f -> h (Loc h f)
-    fillHole :: Loc h f a -> h f
+    withLocs :: h f -> h (Loc h f)
+    fromLoc :: Loc h f a -> h f
 
-    higherD' :: proxy '(h,x) -> Dict (Differentiable (DImpl h x))
+    higherD :: proxy '(h,x) -> Dict (Differentiable (DImpl h x))
 
 newtype D h x f = D { getD :: DImpl h x f }
 
 instance (Differentiable h) => HFunctor (D h x) where
-    hfmap f (D x) | Dict <- higherD' (Proxy :: Proxy '(h,x)) = D (hfmap f x)
+    hfmap f (D x) | Dict <- higherD (Proxy :: Proxy '(h,x)) = D (hfmap f x)
 
 instance (Differentiable h) => Differentiable (D h x) where
     type DImpl (D h x) y = DImpl (DImpl h x) y
-    -- toFrames :: D h x f -> D h x (Loc (D h x) f)
+    -- withLocs :: D h x f -> D h x (Loc (D h x) f)
     -- h :: DImpl h x f
-    -- toFrames h :: DImpl h x f (Loc (DImpl h x) f)
-    toFrames (D h) 
-        | Dict <- higherD' (Proxy :: Proxy '(h,x)) 
-            = D (hfmap implMap (toFrames h))
-    fillHole loc 
-        | Dict <- higherD' (Proxy :: Proxy '(h,x))
-            = D (fillHole (implMap' loc))
+    -- withLocs h :: DImpl h x f (Loc (DImpl h x) f)
+    withLocs (D h) 
+        | Dict <- higherD (Proxy :: Proxy '(h,x)) 
+            = D (hfmap implMap (withLocs h))
+    fromLoc loc 
+        | Dict <- higherD (Proxy :: Proxy '(h,x))
+            = D (fromLoc (implMap' loc))
 
     -- Hard to imagine this not looping...
-    higherD' (_ :: proxy '(D h x,y))
-        | Dict <- higherD' (Proxy :: Proxy '(h,x))
-        , Dict <- higherD' (Proxy :: Proxy '(DImpl h x,y))
+    higherD (_ :: proxy '(D h x,y))
+        | Dict <- higherD (Proxy :: Proxy '(h,x))
+        , Dict <- higherD (Proxy :: Proxy '(DImpl h x,y))
            = Dict
     
 
@@ -80,9 +80,9 @@ instance HFunctor (Field a) where
 
 instance Differentiable (Field a) where
     type DImpl (Field a) x = DField a x
-    toFrames (Field x) = Field (Loc (D DField) x)
-    fillHole (Loc (D DField) x) = Field x
-    higherD' _ = Dict
+    withLocs (Field x) = Field (Loc (D DField) x)
+    fromLoc (Loc (D DField) x) = Field x
+    higherD _ = Dict
 
 instance Serial (Field a) where
     foldConst f (Field (Const a)) = f a
@@ -97,9 +97,9 @@ instance HFunctor (DField a x) where
 
 instance Differentiable (DField a x) where
     type DImpl (DField a x) y = HVoid
-    toFrames DField = DField
-    fillHole (Loc v _) = case v of {}
-    higherD' _ = Dict
+    withLocs DField = DField
+    fromLoc (Loc v _) = case v of {}
+    higherD _ = Dict
 
 
 data HVoid f
@@ -109,9 +109,9 @@ instance HFunctor HVoid where
 
 instance Differentiable HVoid where
     type DImpl HVoid x = HVoid
-    toFrames v = case v of {}
-    fillHole (Loc v _) = case v of {}
-    higherD' _ = Dict
+    withLocs v = case v of {}
+    fromLoc (Loc v _) = case v of {}
+    higherD _ = Dict
     
 
 instance HFunctor (Const a) where
@@ -119,9 +119,9 @@ instance HFunctor (Const a) where
 
 instance Differentiable (Const a) where
     type DImpl (Const a) x = HVoid
-    toFrames (Const x) = Const x
-    fillHole (Loc cx _) = case cx of {}
-    higherD' _ = Dict
+    withLocs (Const x) = Const x
+    fromLoc (Loc cx _) = case cx of {}
+    higherD _ = Dict
 
 instance Serial (Const a) where
     foldConst _ (Const _) = mempty
@@ -135,13 +135,13 @@ instance (HFunctor h, HFunctor h') => HFunctor (h :*: h') where
 
 instance (Differentiable h, Differentiable h') => Differentiable (h :*: h') where
     type DImpl (h :*: h') x = (D h x :*: h') :+: (h :*: D h' x)
-    toFrames (HPair x y) = 
-        HPair (hfmap (\(Loc c a) -> Loc (D (HLeft (HPair c y))) a) (toFrames x))
-              (hfmap (\(Loc c a) -> Loc (D (HRight (HPair x c))) a) (toFrames y))
-    fillHole (Loc (D (HLeft (HPair c y))) a) = HPair (fillHole (Loc c a)) y
-    fillHole (Loc (D (HRight (HPair x c))) a) = HPair x (fillHole (Loc c a))
+    withLocs (HPair x y) = 
+        HPair (hfmap (\(Loc c a) -> Loc (D (HLeft (HPair c y))) a) (withLocs x))
+              (hfmap (\(Loc c a) -> Loc (D (HRight (HPair x c))) a) (withLocs y))
+    fromLoc (Loc (D (HLeft (HPair c y))) a) = HPair (fromLoc (Loc c a)) y
+    fromLoc (Loc (D (HRight (HPair x c))) a) = HPair x (fromLoc (Loc c a))
     
-    higherD' _ = Dict
+    higherD _ = Dict
 
 instance (Serial h, Serial h') => Serial (h :*: h') where
     foldConst f (HPair x y) = foldConst f x <> foldConst f y
@@ -160,12 +160,12 @@ instance (HFunctor h, HFunctor h') => HFunctor (h :+: h') where
 
 instance (Differentiable h, Differentiable h') => Differentiable (h :+: h') where
     type DImpl (h :+: h') x = D h x :+: D h' x
-    toFrames (HLeft x) = HLeft (hfmap (\(Loc c a) -> Loc (D (HLeft c)) a) (toFrames x))
-    toFrames (HRight x) = HRight (hfmap (\(Loc c a) -> Loc (D (HRight c)) a) (toFrames x))
-    fillHole (Loc (D (HLeft c)) a) = HLeft (fillHole (Loc c a))
-    fillHole (Loc (D (HRight c)) a) = HRight (fillHole (Loc c a))
+    withLocs (HLeft x) = HLeft (hfmap (\(Loc c a) -> Loc (D (HLeft c)) a) (withLocs x))
+    withLocs (HRight x) = HRight (hfmap (\(Loc c a) -> Loc (D (HRight c)) a) (withLocs x))
+    fromLoc (Loc (D (HLeft c)) a) = HLeft (fromLoc (Loc c a))
+    fromLoc (Loc (D (HRight c)) a) = HRight (fromLoc (Loc c a))
 
-    higherD' _ = Dict
+    higherD _ = Dict
 
 instance (Serial h, Serial h') => Serial (h :+: h') where
     foldConst f (HLeft a) = foldConst f a
