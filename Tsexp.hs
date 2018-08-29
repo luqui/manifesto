@@ -4,17 +4,20 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 
 import Control.Arrow (first)
 import Data.Functor.Const (Const(..))
 import Data.Monoid (Dual(..))
 import Data.Constraint (Dict(..))
+import Data.Functor.Compose (Compose(..))
+import Data.Functor.Identity (Identity(..))
 
 import Differentiable
 
 -- A generalized version of `h (Tsexp f) -> f (Tsexp f s)`, which also works,
 -- but I think this form captures the spirit of the cast argument better.
-type Cast h f s = forall i. h i -> f (i s)
+type Cast h f s = forall i. h (Compose f i) -> Compose f i s
 
 data Tsexp f s where
     Tsexp :: (Serial h) => Cast h f s -> h (Tsexp f) -> Tsexp f s
@@ -60,5 +63,24 @@ siblings (Zipper (CCons cx (Context1 (cast :: Cast h f a) d :: Context1 f a b)) 
         hfmap (\loc -> Const (Zipper (CCons cx (Context1 cast (fillHole loc))) e))
               (toFrames d)
 
+synthesize :: (Functor f) => Tsexp f s -> f s
+synthesize = fmap runIdentity . getCompose . go
+    where
+    go :: Tsexp f s -> Compose f Identity s
+    go (Tsexp cast dat) = cast (hfmap go dat)
+
+
+edit :: Tsexp f s -> f (Tsexp f s)
+edit = getCompose . go
+    where
+    go :: Tsexp f s -> Compose f (Tsexp f) s
+    go (Tsexp cast dat) = cast (hfmap go dat)
+
 observe :: (Functor f) => Zipper f a -> f (Zipper f a)
-observe (Zipper cx (Tsexp cast dat)) = Zipper cx <$> cast dat
+observe (Zipper cx e) = Zipper cx <$> edit e
+
+
+exampleExp :: Tsexp (Const String) a
+exampleExp = Tsexp (\(HPair (Field (Compose (Const a))) (Field (Compose (Const b)))) -> Compose (Const (a ++ "|" ++ b))) (HPair
+    (Field (Tsexp (\(Const b) -> Compose (Const (show b))) (Const True)))
+    (Field (Tsexp (\(Const s) -> Compose (Const s)) (Const "boo"))))
