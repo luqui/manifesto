@@ -15,7 +15,6 @@ import Control.Arrow (first, second)
 import Data.Constraint (Dict(..))
 import Data.Functor.Const (Const(..))
 import Data.Proxy (Proxy(..))
-import Data.Coerce (coerce)
 
 
 data Loc h f x = Loc (D h x f) (f x)
@@ -57,7 +56,7 @@ instance (Differentiable h) => Differentiable (D h x) where
         implMap :: Loc (DImpl h x) f y -> Loc (D h x) f y
         implMap (Loc d x) = Loc (magic d) x
         magic :: D (DImpl h x) y f -> D (D h x) y f
-        magic = coerce
+        magic (D d) = D (D d)
 
     fromLoc loc 
         | Dict <- higherD (Proxy :: Proxy '(h,x))
@@ -66,7 +65,7 @@ instance (Differentiable h) => Differentiable (D h x) where
         implMap' :: Loc (D h x) f y -> Loc (DImpl h x) f y
         implMap' (Loc d x) = Loc (magic' d) x
         magic' :: D (D h x) y f -> D (DImpl h x) y f
-        magic' = coerce
+        magic' (D (D d)) = D d
 
     -- Hard to imagine this not looping...
     higherD (_ :: proxy '(D h x,y))
