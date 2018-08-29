@@ -36,7 +36,7 @@ class HFunctor h where
     hfmap :: (forall x. f x -> g x) -> h f -> h g
 
 class (HFunctor h) => Differentiable h where
-    type DImpl h x :: (* -> *) -> *
+    type DImpl h (x :: k) :: (k -> *) -> *
     toFrames :: h f -> h (Loc h f)
     fillHole :: Loc h f a -> h f
 
