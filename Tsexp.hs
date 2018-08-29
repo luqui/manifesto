@@ -19,12 +19,8 @@ import Data.Functor.Compose (Compose(..))
 
 import Differentiable
 
--- A cast takes the "surface observations" of the children and gives the
--- surface observations of the parent.  The g is playing the role of keeping
--- the observations surface, that is, making sure each observation is a pure
--- composition of the observations of its children.  This allows the user of 
--- a cast to "annotate" the children arbitrarily, having those annotations
--- tracked through the cast.
+-- This is a higher-kinded version of an F-algebra, of sorts.  It takes
+-- the observations of the children into the observations of the parent.
 type Cast h f s = h f -> f s
 
 data Tsexp f s where
