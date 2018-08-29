@@ -77,14 +77,10 @@ siblings (Zipper (CCons cx (Context1 (cast :: Cast h f a) d :: Context1 f a b)) 
 synthesize :: Tsexp f s -> f s
 synthesize (Tsexp cast dat) = cast (hfmap synthesize dat)
 
-class ExpObserver g f | f -> g where
-    observeTsexp :: f s -> g (Tsexp f s)
-
-edit :: (ExpObserver g f) => Tsexp f s -> g (Tsexp f s)
-edit = observeTsexp . synthesize
-
-editZ :: (Functor g, ExpObserver g f) => Zipper f a -> g (Zipper f a)
-editZ (Zipper cx e) = Zipper cx <$> edit e
+-- Using the fact that one of the observations f supports gives another
+-- Exp, we can edit the zipper at the current point using that observation.
+editZ :: (Functor g) => (forall s. f s -> g (Tsexp f s)) -> Zipper f a -> g (Zipper f a)
+editZ observe (Zipper cx e) = Zipper cx <$> observe (synthesize e)
 
 -- Basic
 data Expr 
@@ -97,8 +93,9 @@ data Obs s = Obs {
     modLit :: Maybe (Integer -> Tsexp Obs s)
   }
 
-instance ExpObserver (Compose Maybe ((->) Integer)) Obs where
-    observeTsexp = Compose . modLit
+-- Plug this into editZ
+observeModLit :: Obs s -> Compose Maybe ((->) Integer) (Tsexp Obs s)
+observeModLit = Compose . modLit
 
 toTsexp :: Expr -> Tsexp Obs Integer
 toTsexp (Add x y) = Tsexp (\(HPair (Field x') (Field y')) -> Obs { value = value x' + value y', pretty = "(" ++ pretty x' ++ "+" ++ pretty y' ++ ")", modLit = Nothing }) (HPair (Field (toTsexp x)) (Field (toTsexp y)))
