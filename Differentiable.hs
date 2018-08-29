@@ -8,7 +8,6 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 module Differentiable where
 
@@ -16,6 +15,7 @@ import Control.Arrow (first, second)
 import Data.Constraint (Dict(..))
 import Data.Functor.Const (Const(..))
 import Data.Proxy (Proxy(..))
+import Data.Coerce (coerce)
 
 
 data Loc h f x = Loc (D h x f) (f x)
@@ -30,6 +30,10 @@ class (HFunctor h) => Differentiable h where
 
     higherD :: proxy '(h,x) -> Dict (Differentiable (DImpl h x))
 
+-- A wrapper to make D injective, because non-injective type families are a
+-- pain (see `implMap` below). We don't use injective data families in the
+-- first place because there is some recursive structure that we need to take
+-- advantage of in order to avoid manually defining infinitely many data types.
 newtype D h x f = D { getD :: DImpl h x f }
 
 -- A "Serial" is a differentiable functor whose holes are "in order".
@@ -42,7 +46,7 @@ instance (Differentiable h) => HFunctor (D h x) where
     hfmap f (D x) | Dict <- higherD (Proxy :: Proxy '(h,x)) = D (hfmap f x)
 
 instance (Differentiable h) => Differentiable (D h x) where
-    type DImpl (D h x) y = DImpl (DImpl h x) y
+    type DImpl (D h x) y = D (DImpl h x) y
     
     withLocs (D h) 
         | Dict <- higherD (Proxy :: Proxy '(h,x)) 
@@ -53,7 +57,7 @@ instance (Differentiable h) => Differentiable (D h x) where
         implMap :: Loc (DImpl h x) f y -> Loc (D h x) f y
         implMap (Loc d x) = Loc (magic d) x
         magic :: D (DImpl h x) y f -> D (D h x) y f
-        magic (D di) = D di
+        magic = coerce
 
     fromLoc loc 
         | Dict <- higherD (Proxy :: Proxy '(h,x))
@@ -62,7 +66,7 @@ instance (Differentiable h) => Differentiable (D h x) where
         implMap' :: Loc (D h x) f y -> Loc (DImpl h x) f y
         implMap' (Loc d x) = Loc (magic' d) x
         magic' :: D (D h x) y f -> D (DImpl h x) y f
-        magic' (D di) = D di
+        magic' = coerce
 
     -- Hard to imagine this not looping...
     higherD (_ :: proxy '(D h x,y))
