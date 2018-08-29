@@ -42,13 +42,10 @@ class (HFunctor h) => Differentiable h where
 
     higherD' :: proxy '(h,x) -> Dict (Differentiable (DImpl h x))
 
-higherD :: forall h x. (Differentiable h) => Dict (Differentiable (D h x))
-higherD | Dict <- higherD' (Proxy :: Proxy '(h,x)) = Dict
-
 newtype D h x f = D { getD :: DImpl h x f }
 
 instance (Differentiable h) => HFunctor (D h x) where
-    hfmap | Dict <- higherD @h @x = hfmap
+    hfmap f (D x) | Dict <- higherD' (Proxy :: Proxy '(h,x)) = D (hfmap f x)
 
 instance (Differentiable h) => Differentiable (D h x) where
     type DImpl (D h x) y = DImpl (DImpl h x) y
@@ -63,10 +60,10 @@ instance (Differentiable h) => Differentiable (D h x) where
             = D (fillHole (implMap' loc))
 
     -- Hard to imagine this not looping...
-    higherD' (_ :: proxy '(D h x,y)) 
+    higherD' (_ :: proxy '(D h x,y))
         | Dict <- higherD' (Proxy :: Proxy '(h,x))
         , Dict <- higherD' (Proxy :: Proxy '(DImpl h x,y))
-            = Dict
+           = Dict
     
 
 
@@ -144,10 +141,7 @@ instance (Differentiable h, Differentiable h') => Differentiable (h :*: h') wher
     fillHole (Loc (D (HLeft (HPair c y))) a) = HPair (fillHole (Loc c a)) y
     fillHole (Loc (D (HRight (HPair x c))) a) = HPair x (fillHole (Loc c a))
     
-    higherD' (_ :: proxy '(h :*: h',x)) 
-        | Dict <- higherD @h @x
-        , Dict <- higherD @h' @x
-        = Dict
+    higherD' _ = Dict
 
 instance (Serial h, Serial h') => Serial (h :*: h') where
     foldConst f (HPair x y) = foldConst f x <> foldConst f y
@@ -171,10 +165,7 @@ instance (Differentiable h, Differentiable h') => Differentiable (h :+: h') wher
     fillHole (Loc (D (HLeft c)) a) = HLeft (fillHole (Loc c a))
     fillHole (Loc (D (HRight c)) a) = HRight (fillHole (Loc c a))
 
-    higherD' (_ :: proxy '(h :+: h', x)) 
-        | Dict <- higherD @h @x
-        , Dict <- higherD @h' @x
-        = Dict
+    higherD' _ = Dict
 
 instance (Serial h, Serial h') => Serial (h :+: h') where
     foldConst f (HLeft a) = foldConst f a

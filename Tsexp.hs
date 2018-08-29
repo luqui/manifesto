@@ -14,7 +14,6 @@
 import Control.Arrow (first)
 import Data.Functor.Const (Const(..))
 import Data.Monoid (Dual(..))
-import Data.Constraint (Dict(..))
 import Data.Functor.Compose (Compose(..))
 
 import Differentiable
@@ -64,8 +63,7 @@ down (Zipper cx (Tsexp cast dat)) =
 
 siblings :: Zipper f a -> ([Zipper f a], [Zipper f a])
 siblings (Zipper CNil _) = ([], [])
-siblings (Zipper (CCons cx (Context1 (cast :: Cast h f a) d :: Context1 f a b)) e) 
-  | Dict <- higherD @h @b
+siblings (Zipper (CCons cx (Context1 cast d)) e) 
     = first getDual . foldConstD (Dual . (:[])) (:[]) $ 
         hfmap (\loc -> Const (Zipper (CCons cx (Context1 cast (fillHole loc))) e))
               (toFrames d)
@@ -125,6 +123,7 @@ main = do
     let z = newZipper (toTsexp exampleExp)
     putStrLn $ pretty (synthesize (zipUp z)) ++ " = " ++ show (value (synthesize (zipUp z)))
     [z',_] <- return $ down z
+    ([], [_]) <- return $ siblings z'
     [z''] <- return $ down z'
     Just f <- return . getCompose $ editZ observeModLit z''
     let z''' = f 10 
