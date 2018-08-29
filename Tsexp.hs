@@ -94,14 +94,38 @@ observeModLit :: Obs s -> Compose Maybe ((->) Integer) (Tsexp Obs s)
 observeModLit = Compose . modLit
 
 toTsexp :: Expr -> Tsexp Obs Integer
-toTsexp (Add x y) = Tsexp (\(HPair (Field x') (Field y')) -> Obs { value = value x' + value y', pretty = "(" ++ pretty x' ++ "+" ++ pretty y' ++ ")", modLit = Nothing }) (HPair (Field (toTsexp x)) (Field (toTsexp y)))
-toTsexp (Lit z) = Tsexp (\(Field obs) -> Obs { value = value obs, pretty = pretty obs, modLit = Nothing }) (Field (toTsexpInt z))
+toTsexp (Add x y) = 
+    Tsexp (\(HPair (Field x') (Field y')) -> 
+        Obs { value = value x' + value y'
+            , pretty = "(" ++ pretty x' ++ "+" ++ pretty y' ++ ")"
+            , modLit = Nothing 
+            }) 
+        (HPair (Field (toTsexp x)) (Field (toTsexp y)))
+toTsexp (Lit z) = Tsexp (\(Field obs) -> 
+        Obs { value = value obs
+            , pretty = pretty obs
+            , modLit = Nothing 
+            }) 
+        (Field (toTsexpInt z))
 
 toTsexpInt :: Integer -> Tsexp Obs Integer
 toTsexpInt z = Tsexp obs (Const z)
     where
     obs :: Const Integer Obs -> Obs Integer
-    obs (Const z') = Obs { value = z', pretty = show z', modLit = Just toTsexpInt }
+    obs (Const z') = Obs { value = z'
+                         , pretty = show z'
+                         , modLit = Just toTsexpInt
+                         }
 
 exampleExp :: Expr
 exampleExp = Add (Lit 1) (Add (Lit 2) (Lit 3))
+
+main :: IO ()
+main = do
+    let z = newZipper (toTsexp exampleExp)
+    putStrLn $ pretty (synthesize (zipUp z)) ++ " = " ++ show (value (synthesize (zipUp z)))
+    [z',_] <- return $ down z
+    [z''] <- return $ down z'
+    Just f <- return . getCompose $ editZ observeModLit z''
+    let z''' = f 10 
+    putStrLn $ pretty (synthesize (zipUp z''')) ++ " = " ++ show (value (synthesize (zipUp z''')))
