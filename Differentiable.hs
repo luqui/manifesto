@@ -20,18 +20,6 @@ import Data.Proxy (Proxy(..))
 
 data Loc h f x = Loc (D h x f) (f x)
 
-implMap :: Loc (DImpl h x) f y -> Loc (D h x) f y
-implMap (Loc d x) = Loc (dmap d) x
-    where
-    dmap :: D (DImpl h x) y f -> D (D h x) y f
-    dmap (D di) = D di
-
-implMap' :: Loc (D h x) f y -> Loc (DImpl h x) f y
-implMap' (Loc d x) = Loc (dmap' d) x
-    where
-    dmap' :: D (D h x) y f -> D (DImpl h x) y f
-    dmap' (D di) = D di
-
 class HFunctor h where
     hfmap :: (forall x. f x -> g x) -> h f -> h g
 
@@ -44,34 +32,46 @@ class (HFunctor h) => Differentiable h where
 
 newtype D h x f = D { getD :: DImpl h x f }
 
+-- A "Serial" is a differentiable functor whose holes are "in order".
+class (Differentiable h) => Serial h where
+    foldConst :: (Monoid m) => (b -> m) -> h (Const b) -> m
+    foldConstD :: (Monoid m, Monoid n) => (b -> m) -> (b -> n) -> D h x (Const b) -> (m,n)
+
+
 instance (Differentiable h) => HFunctor (D h x) where
     hfmap f (D x) | Dict <- higherD (Proxy :: Proxy '(h,x)) = D (hfmap f x)
 
 instance (Differentiable h) => Differentiable (D h x) where
     type DImpl (D h x) y = DImpl (DImpl h x) y
-    -- withLocs :: D h x f -> D h x (Loc (D h x) f)
-    -- h :: DImpl h x f
-    -- withLocs h :: DImpl h x f (Loc (DImpl h x) f)
+    
     withLocs (D h) 
         | Dict <- higherD (Proxy :: Proxy '(h,x)) 
             = D (hfmap implMap (withLocs h))
+        where
+        -- Some magic I don't really care to understand for appeasing the
+        -- typechecker.  Non-injective type families are a pain.
+        implMap :: Loc (DImpl h x) f y -> Loc (D h x) f y
+        implMap (Loc d x) = Loc (magic d) x
+        magic :: D (DImpl h x) y f -> D (D h x) y f
+        magic (D di) = D di
+
     fromLoc loc 
         | Dict <- higherD (Proxy :: Proxy '(h,x))
             = D (fromLoc (implMap' loc))
+        where
+        implMap' :: Loc (D h x) f y -> Loc (DImpl h x) f y
+        implMap' (Loc d x) = Loc (magic' d) x
+        magic' :: D (D h x) y f -> D (DImpl h x) y f
+        magic' (D di) = D di
 
     -- Hard to imagine this not looping...
     higherD (_ :: proxy '(D h x,y))
         | Dict <- higherD (Proxy :: Proxy '(h,x))
         , Dict <- higherD (Proxy :: Proxy '(DImpl h x,y))
            = Dict
-    
 
 
--- A "Serial" is a differentiable functor whose holes are "in order"
-class (Differentiable h) => Serial h where
-    foldConst :: (Monoid m) => (b -> m) -> h (Const b) -> m
-    foldConstD :: (Monoid m, Monoid n) => (b -> m) -> (b -> n) -> D h x (Const b) -> (m,n)
-
+-- Combinators for building differentiable shape functors. 
 
 newtype Field a f = Field { getField :: f a }
 
@@ -175,4 +175,3 @@ instance (Serial h, Serial h') => Serial (h :+: h') where
         = foldConstD f g a
     foldConstD f g (D (HRight a))
         = foldConstD f g a
-

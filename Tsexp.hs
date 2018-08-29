@@ -18,9 +18,10 @@ import Data.Functor.Compose (Compose(..))
 
 import Differentiable
 
-type Alg h f s = h f -> f s
 -- This is a higher-kinded version of an F-algebra, of sorts.  It takes
 -- the observations of the children into the observations of the parent.
+type Alg h f s = h f -> f s
+
 data Tsexp f s where
     Tsexp :: (Serial h) => Alg h f s -> h (Tsexp f) -> Tsexp f s
 -- The first argument here is the "algebra", and it is (in principle)
@@ -70,10 +71,11 @@ siblings (Zipper (CCons cx (Context1 alg d)) e)
 synthesize :: Tsexp f s -> f s
 synthesize (Tsexp alg dat) = alg (hfmap synthesize dat)
 
--- Using the fact that one of the observations f supports gives another
--- Exp, we can edit the zipper at the current point using that observation.
+-- Using a way that one of the observations f supports gives another Exp, we
+-- can edit the zipper at the current point using that observation.
 editZ :: (Functor g) => (forall s. f s -> g (Tsexp f s)) -> Zipper f a -> g (Zipper f a)
 editZ observe (Zipper cx e) = Zipper cx <$> observe (synthesize e)
+
 
 -- Basic
 data Expr 
@@ -83,6 +85,7 @@ data Expr
 data Obs s = Obs {
     value :: s,
     pretty :: String,
+    -- An example rewrite
     modLit :: Maybe (Integer -> Tsexp Obs s)
   }
 
@@ -122,7 +125,7 @@ main = do
     let z = newZipper (toTsexp exampleExp)
     putStrLn $ pretty (synthesize (zipUp z)) ++ " = " ++ show (value (synthesize (zipUp z)))
     [z',_] <- return $ down z
-    ([], [_]) <- return $ siblings z'
+    ([], [_]) <- return $ siblings z'  -- just proof that siblings works
     [z''] <- return $ down z'
     Just f <- return . getCompose $ editZ observeModLit z''
     let z''' = f 10 
