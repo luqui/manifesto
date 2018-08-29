@@ -92,7 +92,7 @@ data Expr
     | Lit Integer
 
 data Obs s = Obs {
-    value :: Integer,
+    value :: s,
     pretty :: String,
     modLit :: Maybe (Integer -> Tsexp Obs s)
   }
@@ -100,14 +100,14 @@ data Obs s = Obs {
 instance ExpObserver (Compose Maybe ((->) Integer)) Obs where
     observeTsexp = Compose . modLit
 
-toTsexp :: Expr -> Tsexp Obs a
+toTsexp :: Expr -> Tsexp Obs Integer
 toTsexp (Add x y) = Tsexp (\(HPair (Field x') (Field y')) -> Obs { value = value x' + value y', pretty = "(" ++ pretty x' ++ "+" ++ pretty y' ++ ")", modLit = Nothing }) (HPair (Field (toTsexp x)) (Field (toTsexp y)))
 toTsexp (Lit z) = Tsexp (\(Field obs) -> Obs { value = value obs, pretty = pretty obs, modLit = Nothing }) (Field (toTsexpInt z))
 
-toTsexpInt :: Integer -> Tsexp Obs a
+toTsexpInt :: Integer -> Tsexp Obs Integer
 toTsexpInt z = Tsexp obs (Const z)
     where
-    obs :: Const Integer Obs -> Obs s
+    obs :: Const Integer Obs -> Obs Integer
     obs (Const z') = Obs { value = z', pretty = show z', modLit = Just toTsexpInt }
 
 exampleExp :: Expr
