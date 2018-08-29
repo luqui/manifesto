@@ -17,6 +17,29 @@ import Data.Functor.Const (Const(..))
 import Data.Proxy (Proxy(..))
 
 
+-- Check this out, derivatives without type families!
+type f ~> g = forall x. f x -> g x
+data D' h x f = D' (forall f'. (f ~> f') -> f' x -> h f')
+
+instance HFunctor (D' h x) where
+    hfmap f (D' d) = D' (\t -> d (t . f))
+
+fromLoc' :: D' h x f -> f x -> h f
+fromLoc' (D' d) = d id
+
+data SomePair f = SomePair (f Int) (f Bool)
+
+dleft :: f Bool -> D' SomePair Int f
+dleft fbool = D' (\t f' -> SomePair f' (t fbool))
+
+
+-- Loc h f x  ----hfmap1---->  Loc h f' x
+--    |                             |
+--  fromLoc                      fromLoc
+--    v                             v
+--   h f      ----hfmap----->      h f'
+
+
 data Loc h f x = Loc (D h x f) (f x)
 
 class HFunctor h where
