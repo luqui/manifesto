@@ -179,5 +179,29 @@ Current thoughts:
 
     instance ExpC Syntax where
         alg = _Lambda <$> "\\" <*> ...
+          <|> _App <$> ...
 
 Pretty messy.
+
+    class Semantics s f where
+        alg :: s f -> f (s Identity)
+
+    instance (Semantics s f, Semantics s f') => Semantics s (f :*: f') where
+        ...
+
+Still can't see how a parser fits cleanly in this picture.
+
+    class Cases s where
+        cases :: [s (Const ())]
+
+    mkParser :: (Cases s)
+              => (s (Const ()) -> Syntax (s Identity)) 
+              -> s Parser -> Parser (t Identity)
+
+    instance Semantics ExpC Parser where
+        alg = mkParser $ \case
+          Lambda{} -> "\\" ...
+          App{}    -> ...
+
+Feels like kind of a hack.  Though it does have the advantage of giving us an
+exhaustiveness check for our parser.  Hmm.
