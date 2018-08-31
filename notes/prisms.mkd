@@ -1,0 +1,183 @@
+I'm trying to implement `focus` in the grammar API, e.g., the thing that allows
+us to specify the editor semantics at a particular point.  An interesting study
+is `Lambda` which has two children: a name and a body expression.  It seems
+wrong to *first* combine the observations for the name and expression and *then*
+apply the semantics -- the name relates in a specific way to the body that is
+different than the default combination.
+
+And that's another thing -- what the heck is a default combination!  Why should
+the observation functor have to be applicative, it's unclear what most
+observations would do as applicative.  Here are some ideas:
+
+* Free variables: union
+* Variables in scope: pass through (reader)
+* Render: concatenate
+* Inferred type: surely impossible
+
+The inferred type is the big one that shows that requiring applicative is not
+reasonable.
+
+Here's another idea: grammar is parameterized on the shape functor.
+
+    unit  :: g f (Const ())
+    (≪*≫) :: g f s -> g f s' -> g f (s :*: s')
+    empty :: g f s
+    (≪|≫) :: g f s -> g f s' -> g f s
+    focus :: (s f -> s' f) -> g f s -> g f s'
+
+Hmm....
+
+There seem to be two different things going on at once in here.  One is the
+semantics, which has to do with the observation functor and stuff, and the other
+is the syntax, which constructs and deconstructs a concrete type.  Maybe they
+should be separated?
+
+There is still duplication, though.  The grammar specifies the logical structure
+of a syntax tree, which is what both the syntax and the semantics are about. 
+
+Let's look at lambda again.  We have a prism
+
+    _Lambda :: Prism' Exp (Name,Exp)
+
+There are a bunch of things associated with a lambda that we want to specify.
+
+* How to parse it from a string: `Parser Exp`
+* How to pretty print it (if it's a lambda): `Exp -> Maybe Doc`
+* How to deconstruct it: `Exp -> Maybe (Sexp Exp)`
+* Its local observations: `(f Name, f Exp) -> f Exp`
+
+Parsing and pretty printing are done in parsec style by scattering around
+semantics-free tokens which only have syntactic content.  Deconstruction is done
+using the `IsoFunctor/Monoidal` representation and the prism.  We don't know
+about observations yet.
+
+If we want to give the semantics of `Lambda`, it sort of goes with the prism, it
+seems.  So a "semantic prism" for lambda might look like
+
+    SemLambda {
+        prism :: Prism' Exp (Name,Exp)
+        sem   :: (f Name, f Exp) -> f Exp
+    }
+
+I think we can abstract out the `(Name,Exp)` thing using shape functors:
+
+    type LambdaShape = Field Name :*: Field Exp
+    SemLambda {
+        prism :: Prism' Exp (LambdaShape Identity),
+        sem :: LambdaShape f -> f Exp
+        -- sem :: LambdaShape f -> Field Exp f
+    }
+
+A prism looks like
+
+    Prism a b = Prism { get :: a -> Maybe b, put :: b -> a }
+
+What about a shape prism
+
+    get :: a -> Maybe (s Identity),         put :: s Identity -> a
+    get :: (Field a ~> Maybe . s) Identity, put :: (s ~> Field a) Identity
+    sem :: (s ~> Field a) f
+
+We see there is a similarity between `put` and `sem` -- namely, `put` is the
+semantics algebra for the trivial semantics, aka the syntax.
+
+Are there other functors for which `Field a ~> Maybe . s` is meaningful? 
+`f a -> Maybe (s f)`.  Well if `f` is `Const String`, the concrete syntax, then
+it can be seen as a "local parser" -- i.e it breaks up the input into a shape of
+subexpressions to be parsed.  Unfortunately good parsers don't really work that
+way (though that is how the very first parser I wrote in high school worked :-).
+Yet the analogy *prettyprinting:parsing :: construction:deconstruction* is
+still striking.  I guess the left of this analogy is concrete syntax and the
+right is abstract syntax.  Our grammar is about this analogy, except that we
+want to add "semantics" also (which is not really invertible).  And I also like
+the angle of parsing (`Parser`) and pretty printing (`Const Doc`) as a type of
+semantics.  So abstract syntax deconstruction is kind of the odd man out.
+
+So what if abstract syntax deconstruction was also a type of semantics; after
+all, it's pretty much parsing, except that the "concrete" representation we're
+parsing from is the abstract syntax itself!  It just seems like the arrow is
+going the wrong direction; we have the real `a` on the left and the shape on the
+right.  So let's replace `->` with an arbitrary category `~>` so we can take its
+dual.
+
+    Algebra (~>) s f a = s f ~> f a
+
+Then our semantic prism is
+
+    get :: Algebra (Maybe _ <-) s Identity a    (Dual (Kleisli Maybe))
+    put :: Algebra (->) s Identity a
+    sem :: Algebra (->) s obs a
+
+`s` and `a` are not varying at all, whereas `f` is varying with the category. So
+bundle it together `(~> | f)`
+
+    get :: Algebra (Maybe _ <- | Identity) s a
+    put :: Algebra (-> | Identity) s a
+    sem :: Algebra (-> | obs) s a
+
+I mean, I guess the category is determined by the target of the functor.
+
+    (~>) :: (k -> k -> *)
+    f :: t -> k
+    a :: t
+    s :: (t -> k) -> k
+
+But the target category `k` varies with the functor, so `s` should be defined in
+a way that is agnostic to that category.   And if it's just products and
+coproducts that makes sense, but I'm also using the shape for other info,
+essentially fixing `k` to be `*`.  MMm i'm overthinking this.
+
+------------
+
+Another idea.  Let's assume that we have a "shapely presented" abstract syntax
+
+    data Exp f
+      = App (f (Exp f)) (f (Exp f))
+      | Lambda (f Name) (f (Exp f))
+      | Var (f Name)
+
+We specify the syntax with an algebra, like a pretty printer (but it will come
+with a parser, too)
+
+    syntax :: Exp Syntax -> Syntax (Exp Id)  -- or -> Syntax (Exp Syntax) ?
+    syntax (App a b) = "(" *> (App <$> a <*> " " *> b) *> ")"
+    syntax (Lambda v body) = "\\" *> Lambda <$> string v <*> ". " *> body
+    syntax (Var v) = string v
+
+We can present the semantics with another algebra
+
+    freeVars :: Exp (Const (Set Name)) -> Const (Set Name) (Exp Id)
+    freeVars = ...
+
+I guess the destructurer is free since we are already shapified.  What remains
+is the expression of the shape so that a parser can be expressed:
+
+    shape = App ... <|> Lambda ... <|> Var ...
+
+There is some yucky duplication, the fact that `syntax` is a sortof identity
+function, the fact that `shape` needs to be specified at all.  I think this was
+the appeal of the unified approach.  Yet for semantics I don't want it to be
+unified...
+
+So I think parsing as an algebra doesn't really work, unless we generalize our
+arrows.
+
+    (<|>) :: (a ~> b) -> (a ~> b) -> (a ~> b)
+
+-------
+
+Current thoughts:
+
+    class ExpC f where
+        alg :: ExpF f ~> f (ExpF Identity)
+
+    pure :: (Const ()) Syntax ~> Syntax (Const () Identity)
+    (<*>) :: (s f ~> f (s g)) 
+          -> (s' f ~> f (s' g)) 
+          -> ((s :*: s') f ~> f ((s :*: s') g)
+    (<$>) :: (forall f. Prism' (s f) (s' f)) -> s' f ~> f (s' g) -> s f ~> f (s g)
+
+    instance ExpC Syntax where
+        alg = _Lambda <$> "\\" <*> ...
+
+Pretty messy.
