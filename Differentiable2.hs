@@ -49,7 +49,8 @@ class (HFunctor h) => Differentiable h where
 
 --------- "Proof" that derivatives are differentiable ---------
 -- (Seems a bit roundabout with this WithHole business, probably
--- can be simplified away)
+-- can be simplified away, or perhaps h (WithHole x f) is the 
+-- proper representation for D h x f in the first place.
 ---------------------------------------------------------------
 data WithHole x f a where
     NotHole :: f a -> WithHole x f a
