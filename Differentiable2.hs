@@ -1,6 +1,7 @@
 {-# OPTIONS -Wall #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -8,7 +9,7 @@
 
 module Differentiable2
     (HFunctor(..)
-    , D, Loc(..), fromLoc, hfmap1Loc, hfmap2Loc
+    , D, Loc(..), fromLoc, hfmap1Loc, hfmap2Loc, commuteDs
     , Differentiable(..)
     , HTraversable(..)
     , HFList(..)
@@ -21,12 +22,12 @@ import Data.Functor.Compose (Compose(..))
 class HFunctor h where
     hfmap :: (forall x. f x -> g x) -> h f -> h g
 
-newtype D h x f = D (forall g. (forall y. f y -> g y) -> g x -> h g)
+newtype D h x f = D { unD :: forall g. (forall y. f y -> g y) -> g x -> h g }
 
 instance HFunctor (D h x) where
     hfmap f (D d) = D (\t -> d (t . f))
 
-data Loc h f x = Loc (D h x f) (f x)
+data Loc h f x = Loc { context :: D h x f, focus :: f x }
 
 fromLoc :: Loc h f a -> h f
 fromLoc (Loc (D d) foc) = d id foc
@@ -45,6 +46,42 @@ hfmap2Loc f (Loc (D d) foc) = Loc (D (\f' x -> f (d f' x))) foc
 
 class (HFunctor h) => Differentiable h where
     withLocs :: h f -> h (Loc h f)
+
+--------- "Proof" that derivatives are differentiable ---------
+-- (Seems a bit roundabout with this WithHole business, probably
+-- can be simplified away)
+---------------------------------------------------------------
+data WithHole x f a where
+    NotHole :: f a -> WithHole x f a
+    Hole :: WithHole x f x
+
+toHoleRep :: D h x f -> h (WithHole x f)
+toHoleRep (D d) = d NotHole Hole
+
+fromHoleRep :: (HFunctor h) => h (WithHole x f) -> D h x f
+fromHoleRep h = D (\f foc -> replaceHole foc (hfmap (mapHole f) h))
+    where
+    replaceHole :: (HFunctor h) => f x -> h (WithHole x f) -> h f
+    replaceHole repl = hfmap (\case
+        NotHole x -> x
+        Hole -> repl)
+
+    mapHole :: (forall y. f y -> g y) -> WithHole x f a -> WithHole x g a
+    mapHole f (NotHole x) = NotHole (f x)
+    mapHole _ Hole = Hole
+
+commuteDs :: D (D h y) x f -> D (D h x) y f
+commuteDs d = D (\f focf -> D (\g focg -> unD (unD d (g . f) focg) id (g focf)))
+
+commuteHoleLoc :: Loc h (WithHole x f) y -> WithHole x (Loc (D h x) f) y
+commuteHoleLoc (Loc d (NotHole fy)) = NotHole (Loc (commuteDs (fromHoleRep d)) fy)
+commuteHoleLoc (Loc _ Hole) = Hole
+
+instance (Differentiable h) => Differentiable (D h x) where
+    withLocs d = fromHoleRep (hfmap commuteHoleLoc holey)
+        where
+        holey = withLocs (toHoleRep d)
+-----------------------QED--------------------
 
 class (HFunctor h) => HTraversable h where
     hsequenceA :: (Applicative f) => h (Compose f g) -> f (h g)
@@ -79,6 +116,9 @@ instance Differentiable (HFList ts) where
 
 dcons :: f x -> D (HFList xs) y f -> D (HFList (x ': xs)) y f
 dcons x (D d) = D (\f foc -> HHCons (f x) (d f foc))
+
+
+
 
 
 data Example f = Example (f Int) (f String)
