@@ -134,3 +134,28 @@ instance Differentiable Example where
 
 instance HTraversable Example where
     htraverse f (Example a b) = Example <$> f a <*> f b
+
+
+-- Another try: an attempt to make fromLoc cheap in the case where h is
+-- large.  Basically this just says a derivative is any HFunctor h' with a 
+-- polymorphic fromLoc function.
+
+data D' h x f where
+    D' :: (HFunctor h') => h' f -> (forall g. h' g -> g x -> h g) -> D' h x f
+
+data Loc' h f x = Loc' (D' h x f) (f x)
+
+fromLoc' :: Loc' h f x -> h f
+fromLoc' (Loc' (D' cx inj) foc) = inj cx foc
+
+instance HFunctor (D' h x) where
+    hfmap f (D' cx inj) = D' (hfmap f cx) inj
+
+newtype Field a f = Field { getField :: f a } 
+instance HFunctor (Field a) where
+    hfmap f (Field x) = Field (f x)
+
+withLocsExample' :: Example f -> Example (Loc' Example f)
+withLocsExample' (Example a b) = 
+    Example (Loc' (D' (Field b) (\(Field b) x -> Example x b)) a)
+            (Loc' (D' (Field a) (\(Field a) x -> Example a x)) b)
