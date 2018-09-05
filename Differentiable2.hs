@@ -157,5 +157,11 @@ instance HFunctor (Field a) where
 
 withLocsExample' :: Example f -> Example (Loc' Example f)
 withLocsExample' (Example a b) = 
-    Example (Loc' (D' (Field b) (\(Field b) x -> Example x b)) a)
-            (Loc' (D' (Field a) (\(Field a) x -> Example a x)) b)
+    Example (Loc' (D' (Field b) (\(Field b') x -> Example x b')) a)
+            (Loc' (D' (Field a) (\(Field a') x -> Example a' x)) b)
+
+toHoleRep' :: D' h x f -> h (WithHole x f)
+toHoleRep' (D' cx inj) = inj (hfmap NotHole cx) Hole
+
+fromHoleRep' :: (Differentiable h) => h (WithHole x f) -> D' h x f
+fromHoleRep' h = D' (fromHoleRep h) (\d foc -> fromLoc (Loc d foc))
