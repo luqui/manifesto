@@ -1,4 +1,5 @@
 {-# OPTIONS -Wall #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -17,7 +18,10 @@ import Data.Functor.Const (Const(..))
 import Data.Monoid (Dual(..))
 import Data.Functor.Compose (Compose(..))
 
-import Differentiable
+import qualified Rank2
+import Data.Functor.Differentiable.Rank2
+
+type Serial h = (Differentiable h, Rank2.Foldable h)
 
 -- This is a higher-kinded version of an F-algebra, of sorts.  It takes
 -- the observations of the children into the observations of the parent.
@@ -58,19 +62,19 @@ up (Zipper (CCons cx cx1) e) = Just (Zipper cx (fillContext1 cx1 e))
 
 down :: Zipper f a -> [Zipper f a]
 down (Zipper cx (Tsexp alg dat)) = 
-    foldConst (:[]) $
-        hfmap (\(Loc d e) -> Const (Zipper (CCons cx (Context1 alg d)) e)) 
-              (withLocs dat)
+    Rank2.foldMap ((:[]) . getConst) $
+        Rank2.fmap (\(Loc d e) -> Const (Zipper (CCons cx (Context1 alg d)) e)) 
+                   (withLocs dat)
 
 siblings :: Zipper f a -> ([Zipper f a], [Zipper f a])
 siblings (Zipper CNil _) = ([], [])
 siblings (Zipper (CCons cx (Context1 alg d)) e) 
-    = first getDual . foldConstD (Dual . (:[])) (:[]) $ 
-        hfmap (\loc -> Const (Zipper (CCons cx (Context1 alg (fromLoc loc))) e))
-              (withLocs d)
+    = first getDual . foldMapD (Dual . (:[]) . getConst) ((:[]) . getConst) $ 
+        Rank2.fmap (\loc -> Const (Zipper (CCons cx (Context1 alg (fromLoc loc))) e))
+                   (withLocs d)
 
 synthesize :: Tsexp f s -> f s
-synthesize (Tsexp alg dat) = alg (hfmap synthesize dat)
+synthesize (Tsexp alg dat) = alg (synthesize Rank2.<$> dat)
 
 -- Using a way that one of the observations f supports gives another Exp, we
 -- can edit the zipper at the current point using that observation.
@@ -96,18 +100,18 @@ observeModLit = Compose . modLit
 
 toTsexp :: Expr -> Tsexp Obs Integer
 toTsexp (Add x y) = 
-    Tsexp (\(HPair (Field x') (Field y')) -> 
+    Tsexp (\(Rank2.Pair (Rank2.Only x') (Rank2.Only y')) -> 
         Obs { value = value x' + value y'
             , pretty = "(" ++ pretty x' ++ "+" ++ pretty y' ++ ")"
             , modLit = Nothing 
             }) 
-        (HPair (Field (toTsexp x)) (Field (toTsexp y)))
-toTsexp (Lit z) = Tsexp (\(Field obs) -> 
+        (Rank2.Pair (Rank2.Only (toTsexp x)) (Rank2.Only (toTsexp y)))
+toTsexp (Lit z) = Tsexp (\(Rank2.Only obs) -> 
         Obs { value = value obs
             , pretty = pretty obs
             , modLit = Nothing 
             }) 
-        (Field (toTsexpInt z))
+        (Rank2.Only (toTsexpInt z))
 
 toTsexpInt :: Integer -> Tsexp Obs Integer
 toTsexpInt z = Tsexp obs (Const z)

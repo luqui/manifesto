@@ -15,11 +15,13 @@ module Data.Functor.Differentiable.Rank2
     ( D(..), mapShapeD
     , Loc(..), fromLoc, fill, mapShapeLoc, mapLoc
     , Differentiable(..)
+    , DFoldable(..)
     , commuteDs
     )
 where
 
 import qualified Rank2
+import Data.Monoid (Endo(..))
 import Data.Functor.Const (Const(..))
 import Data.Functor.Compose (Compose(..))
 
@@ -27,6 +29,12 @@ import Data.Functor.Compose (Compose(..))
 -- <$> should have the same precedence as the built in one, dude
 instance Rank2.Functor (Const x) where
     _ <$> Const x = Const x
+
+instance Rank2.Foldable (Const x) where
+    foldMap _ = mempty
+
+instance Rank2.Traversable (Const x) where
+    sequence (Const x) = pure (Const x)
 
 instance (Functor f, Rank2.Functor h) => Rank2.Functor (Compose f h) where
     f <$> Compose x = Compose ((f Rank2.<$>) <$> x)
@@ -159,6 +167,27 @@ instance (Rank2.Foldable h) => Rank2.Foldable (HoleRep h x) where
 
 instance (Rank2.Foldable h) => Rank2.Foldable (D h x) where
     foldMap f = Rank2.foldMap f . toHoleRep
+
+class DFoldable h where
+    foldMapD :: (Monoid m, Monoid n) => (forall x. f x -> m) -> (forall x. f x -> n) -> h f -> (m,n)
+
+instance (Rank2.Foldable h) => DFoldable (HoleRep h x) where
+    foldMapD f g = 
+        (\(_,m,n) -> (m,n))
+        . flip appEndo (True,mempty,mempty) -- after starts as True
+                                            -- because Endo processes
+                                            -- right-to-left (like (.))
+        . Rank2.foldMap (\x -> Endo (\(after,m,n) -> 
+            case x of
+                Hole -> (True,m,n)
+                NotHole a
+                    | after     -> (after, m, g a <> n)
+                    | otherwise -> (after, f a <> m, n)))
+        . getHoleRep
+
+instance (Rank2.Foldable h) => DFoldable (D h x) where
+    foldMapD f g = foldMapD f g . toHoleRep
+
 
 sequenceWH :: (Applicative m) => WithHole x (Compose m p) f -> m (WithHole x p f)
 sequenceWH Hole = pure Hole
