@@ -1,0 +1,76 @@
+Context:  I'm thinking about how we represent variables.  In particular,
+say you're focusing on the *usage* of a variable, bound somewhere else,
+and you want to rename it.  I don't think variables should be represented
+primarily as strings -- the name seems more like documentation than anything
+essential.
+
+Let's say said documentation is stored at the binding site.  Then if we have
+the zipper focusing on the usage, we want to travel up to the binding site,
+rename the variable, and then *back down* to the usage we were just at. 
+Keeping track of the path back down is the challenge.
+
+The idea is this: what if instead of travelling up then trying to navigate back
+down, we travel "down" to the binding site -- that is, we open up a zipper
+*into the zipper* -- then the path back to the usage is a linear "upward" style
+path and we don't need indices or anything.  This leads is to the question:
+what does it mean to make a zipper of a zipper?
+
+Consider this expression
+
+    (1 + (2 * 3)) + 4
+
+Where 2*3 is in focus.  That is, the zipper looks like:
+
+    (_ + 4), (1 + _) |- 2 * 3
+
+Taking this as a data structure in its own right, the zipper is either
+the same context paired with a zipper on the right
+
+    {(_ + 4), (1 + _) |- _} |- 2 * 3
+
+which is isomorphic to the original zipper, or a focus on the left, which is
+a brand new thing
+
+    {_ |- 2*3} |- (_ + 4), (1 + _)
+
+We can descend again in two ways
+
+    {_ |- 2*3}, ((_ + 4), _) |- (1 + _)
+    {_ |- 2*3}, (, (1 + _))  |- (_ + 4)
+
+So in this case, we always get a context in the focus.  A worry of mine is
+quelled as there is no duplication in this representation -- each thing is
+still only represented once, so if we make a change, we can be pretty 
+confident that the change will propagate well (i.e. we don't get any 
+free-group-on-2-elements-instead-of-lattice type behavior that seems to
+plague my editor designs).  But if we want to change something, we have
+to engage with it on its own terms as a context (thus probably through
+the HoleRep-style derivative).
+
+Still it seems quite reasonable. In the list representation of a zipper it's
+only one move away from the binding site.  In a recursive representation we may
+have to do many moves to get to the proper context.   In order to make the
+change--say, for example, we want to change the 4 to a 5, we will need a
+second derivative.
+    
+    (_ + 4), (1 + _) |- 2 * 3
+    {(_ + 4), (1 + _) |- _} |- 2 * 3
+    {_ |- 2*3} |- (_ + 4), (1 + _)
+    {_ |- 2*3}, (, (1 + _))  |- (_ + 4)
+    {_ |- 2*3}, (, (1 + _)), (_ + _2)  |- 4
+    *edit*
+    {_ |- 2*3}, (, (1 + _)), (_ + _2)  |- 5
+    {_ |- 2*3}, (, (1 + _))  |- (_ + 5)
+    {_ |- 2*3} |- (_ + 5), (1 + _)
+    {(_ + 5), (1 + _) |- _} |- 2 * 3
+    (_ + 5), (1 + _) |- 2 * 3
+
+Tada!
+
+Of course we may not need to zip into a zipper. It could be enough to go find
+the necessary context and just change it without "navigating" with a special
+data structure.  
+
+And then there is another issue with our Tsexp representation which has
+cache nodes, e.g. the environment is cached at each level of the zipper,
+and those caches will need to be updated. Hmm..
