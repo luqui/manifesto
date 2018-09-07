@@ -1,6 +1,6 @@
 {-# OPTIONS -Wall #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -10,7 +10,6 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -20,10 +19,10 @@ module Grammar2 where
 
 import Control.Applicative (liftA2)
 import Control.Monad ((<=<))
-import Data.Functor.Const (Const)
+import Data.Functor.Const (Const(..))
 import Data.Functor.Identity (Identity(..))
 import Data.Monoid (First(..))
-import Rank2 (Product, Only)
+import Rank2 (Product(..), Only(..))
 
 
 -- Here Const, Only, and Product shapes are emulating their Rank2 combinators,
@@ -43,6 +42,27 @@ type family (h :: (* -> *) -> *) $ (f :: * -> *) :: * where
     Only t $ f = f t
     (h :*: h') $ f = (h $ f, h' $ f)
     h $ f = h f
+
+class Shape h where
+    toShapeConstr :: h $ f -> h f
+    default toShapeConstr :: (h $ f) ~ h f => h $ f -> h f
+    toShapeConstr = id
+    fromShapeConstr :: h f -> h $ f
+    default fromShapeConstr :: (h $ f) ~ h f => h f -> h $ f
+    fromShapeConstr = id
+
+instance Shape (Const a) where
+    toShapeConstr = Const
+    fromShapeConstr = getConst
+
+instance Shape (Only a) where
+    toShapeConstr = Only
+    fromShapeConstr = fromOnly
+
+instance (Shape h, Shape h') => Shape (Product h h') where
+    toShapeConstr (x,y) = Pair (toShapeConstr x) (toShapeConstr y)
+    fromShapeConstr (Pair x y) = (fromShapeConstr x, fromShapeConstr y)
+
 
 -- A shape prism.  No funny business on the f, we use enough structural
 -- isomorphisms that you could mess everything up that way.
@@ -143,6 +163,8 @@ data ExprF f
     = Cat (f Expr) (f Expr)
     | Lit (f Char)
 
+instance Shape ExprF
+
 -- These should be automatically generated.
 _Cat :: HPrism ExprF (Only Expr :*: Only Expr)
 _Cat = HPrism (\_ (a, b) -> Cat a b)
@@ -173,10 +195,10 @@ expr = locus $ choice
 -- We give a semantics to each type required by Loci.
 data family EvalSem a
 data instance EvalSem Char = EChar Char
+    deriving Show
 data instance EvalSem Expr = EStr String
+    deriving Show
 
-deriving instance Show (EvalSem Char)
-deriving instance Show (EvalSem Expr)
 
 instance Semantics EvalSem (Const Char) where
     sem _ c = EChar c
