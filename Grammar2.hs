@@ -122,11 +122,14 @@ instance (Representational f, Semantics f h) => Locus h (Annotate f) where
     locus (Annotate ann) = Annotate (\(Only (Identity h)) -> sem <$> ann h)
 
 
+-- The abstract syntax.  Note the pattern of recusion: f on top, Identity the
+-- rest of the way down.
 type Expr = ExprF Identity
 data ExprF f
     = Cat (f Expr) (f Expr)
     | Lit (f Char)
 
+-- These should be automatically generated.
 _Cat :: Prism' (ExprF f) ((Only Expr :*: Only Expr) f)
 _Cat = prism' (\(Pair (Only a) (Only b)) -> Cat a b)
               (\case Cat a b -> Just (Pair (Only a) (Only b))
@@ -137,21 +140,23 @@ _Lit = prism' (\(Only c) -> Lit c)
               (\case Lit c -> Just (Only c)
                      _ -> Nothing)
 
+-- The grammar.
+-- We collect the types that need to be given semantics into the synonym 'Loci'.
 type Loci g = (Syntax g, Locus ExprF g, Locus (Const Char) g)
 
+-- Concrete syntax.
 expr :: (Loci g) => g (Only Expr)
 expr = locus $ choice
     [ symbol "(" *≫ (_Cat ≪?≫ expr ≪*≫ symbol " ++ " *≫ expr) ≪* symbol ")"
     , _Lit ≪?≫ promoteConst char
     ]
 
-pattern I :: a -> Identity a
-pattern I x = Identity x
-
-exampleExpr :: Only Expr Identity
-exampleExpr = Only (Identity (Cat (I (Cat (I (Lit (I 'a'))) (I (Lit (I 'b'))))) (I (Lit (I 'c')))))
-
-
+-- Evaluation semantics. (It's a shame that we need to coerce for promoteConst,
+-- that's what's causing all this Representational junk.  If not, EvalSem could
+-- even be a GADT showing how to evaluate each type of representable thing.
+-- There must be a better way.)
+--
+-- We give a semantics to each type required by Loci.
 newtype EvalSem a = EvalSem { getEvalSem :: String }
 
 instance Representational EvalSem where rep Coercion = Coercion
@@ -164,7 +169,17 @@ instance Semantics EvalSem ExprF where
     sem (Lit x) = Only . EvalSem $ getEvalSem x
     
 
+-- Example expression.
+pattern I :: a -> Identity a
+pattern I x = Identity x
+
+exampleExpr :: Only Expr Identity
+exampleExpr = Only (I (Cat (I (Cat (I (Lit (I 'a'))) (I (Lit (I 'b'))))) (I (Lit (I 'c')))))
+
+
 main :: IO ()
 main = do
+    -- Pretty print.
     print $ runStringPrinter expr exampleExpr
+    -- Evaluate.
     print . fmap (getEvalSem . fromOnly) $ runAnnotate expr exampleExpr
