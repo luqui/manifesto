@@ -3,12 +3,14 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -169,14 +171,18 @@ expr = locus $ choice
 -- There must be a better way.)
 --
 -- We give a semantics to each type required by Loci.
-newtype EvalSem a = EvalSem { getEvalSem :: String }
+data EvalSem a where
+    EChar :: Char -> EvalSem Char
+    EStr  :: String -> EvalSem Expr
+
+deriving instance Show (EvalSem a)
 
 instance Semantics EvalSem (Const Char) where
-    sem _ c = EvalSem [c]
+    sem _ c = EChar c
 
 instance Semantics EvalSem ExprF where
-    sem _ (Cat x y) = EvalSem $ getEvalSem x ++ getEvalSem y
-    sem _ (Lit x) = EvalSem $ getEvalSem x
+    sem _ (Cat (EStr x) (EStr y)) = EStr (x ++ y)
+    sem _ (Lit (EChar x)) = EStr [x]
     
 
 -- Example expression.
@@ -192,4 +198,4 @@ main = do
     -- Pretty print.
     print $ runStringPrinter expr (I exampleExpr)
     -- Evaluate.
-    print . fmap getEvalSem $ runAnnotate expr (I exampleExpr)
+    print (runAnnotate expr (I exampleExpr) :: First (EvalSem Expr))
