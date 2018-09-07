@@ -1,4 +1,5 @@
 {-# OPTIONS -Wall #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -9,23 +10,47 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Grammar2 where
 
 import Control.Applicative (liftA2)
-import Control.Lens (Prism', prism', Iso', iso, preview, review)
 import Control.Monad ((<=<))
-import Data.Functor.Const (Const(..))
+import Data.Functor.Const (Const)
 import Data.Functor.Identity (Identity(..))
 import Data.Monoid (First(..))
-import Rank2 (Product(..), Only(..))
+import Rank2 (Product, Only)
 
+
+-- Here Const, Only, and Product shapes are emulating their Rank2 combinators,
+-- but they are "virtual", in that they are simplified away by the ($) type
+-- family before we ever see their constructors.  (I have hidden the
+-- constructors just to make sure!) It means we have to pass a little more
+-- explicit type information around, but it also means that we can omit those
+-- nuissance constructors everywhere, and, more importantly, that semantics
+-- functors need not be representational, which means that you can, for
+-- example, use a GADT to have declare different value types corresponding to
+-- different types of nodes in the AST.  For example, expressions get a Value
+-- as their semantics, but definitions get a (Name,Value) pair.
 type (:*:) = Product
+
+type family (h :: (* -> *) -> *) $ (f :: * -> *) :: * where
+    Const t $ f = t
+    Only t $ f = f t
+    (h :*: h') $ f = (h $ f, h' $ f)
+    h $ f = h f
 
 -- A shape prism.  No funny business on the f, we use enough structural
 -- isomorphisms that you could mess everything up that way.
-type HPrism h' h = forall f. Prism' (h' f) (h f)
+
+data Proxy p = Proxy
+
+data HPrism h' h = HPrism { 
+    review  :: forall f. Proxy f -> (h $ f) -> (h' $ f),
+    preview :: forall f. Proxy f -> (h' $ f) -> Maybe (h $ f)
+  }
 
 infixr 4 ≪?≫
 infixr 5 ≪*≫, ≪*, *≫
@@ -41,14 +66,14 @@ class Grammar g where
 (*≫) :: (Grammar g) => g (Const ()) -> g h -> g h
 s *≫ g = leftUnit ≪?≫ (s ≪*≫ g)
     where
-    leftUnit :: Iso' (h f) ((Const () :*: h) f)
-    leftUnit = iso (\x -> Pair (Const ()) x) (\(Pair (Const ()) x) -> x) 
+    leftUnit :: HPrism h (Const () :*: h)
+    leftUnit = HPrism (\_ (() , x) -> x) (\_ x -> Just (() , x))
 
 (≪*) :: (Grammar g) => g h -> g (Const ()) -> g h
 g ≪* s = rightUnit ≪?≫ (g ≪*≫ s)
     where
-    rightUnit :: Iso' (h f) ((h :*: Const ()) f)
-    rightUnit = iso (\x -> Pair x (Const ())) (\(Pair x (Const ())) -> x) 
+    rightUnit :: HPrism h (h :*: Const ())
+    rightUnit = HPrism (\_ (x , ()) -> x) (\_ x -> Just (x , ()))
 
 choice :: (Grammar g) => [g h] -> g h
 choice = foldr (≪|≫) empty
@@ -58,13 +83,7 @@ class (Grammar g) => Syntax g where
     char :: g (Const Char)
 
 class (Grammar g) => Locus h g where
-    locus :: g h -> g (Only (h Identity))
-
-promoteConst :: (Grammar g, Locus (Const a) g) => g (Const a) -> g (Only a)
-promoteConst = (shuf ≪?≫) . locus
-    where
-    shuf :: Iso' (Only a f) (Only (Const a Identity) f)
-    shuf = undefined
+    locus :: g h -> g (Only (h $ Identity))
 
 {-
 newtype Parser a = Parser { runParser :: String -> Maybe (a, String) }
@@ -74,32 +93,32 @@ instance Grammar Parser where
 instance Locus h Parser
 -}
 
-newtype StringPrinter h = StringPrinter { runStringPrinter :: h Identity -> First String }
+newtype StringPrinter h = StringPrinter { runStringPrinter :: (h $ Identity) -> First String }
 
 instance Grammar StringPrinter where
-    p ≪?≫ pp = StringPrinter (runStringPrinter pp <=< First . preview p)
-    unit = StringPrinter (\(Const ()) -> pure "")
-    pp ≪*≫ pp' = StringPrinter (\(Pair h h') -> liftA2 (<>) (runStringPrinter pp h) (runStringPrinter pp' h'))
+    p ≪?≫ pp = StringPrinter (runStringPrinter pp <=< First . preview p (Proxy :: Proxy Identity))
+    unit = StringPrinter (\() -> pure "")
+    pp ≪*≫ pp' = StringPrinter (\(h , h') -> liftA2 (<>) (runStringPrinter pp h) (runStringPrinter pp' h'))
     empty = StringPrinter (\_ -> mempty)
     pp ≪|≫ pp' = StringPrinter (\h -> runStringPrinter pp h <> runStringPrinter pp' h)
 
 instance Syntax StringPrinter where
-    symbol s = StringPrinter (\(Const ()) -> pure s)
-    char = StringPrinter (\(Const c) -> pure [c])
+    symbol s = StringPrinter (\() -> pure s)
+    char = StringPrinter (\c -> pure [c])
 
 instance Locus h StringPrinter where
-    locus pp = StringPrinter (\(Only (Identity h)) -> runStringPrinter pp h)
+    locus pp = StringPrinter (\(Identity h) -> runStringPrinter pp h)
 
 
 class Semantics f h where
-    sem :: h f -> Only (h Identity) f
+    sem :: Proxy h -> h $ f -> f (h $ Identity)
 
-newtype Annotate f h = Annotate { runAnnotate :: h Identity -> First (h f) }
+newtype Annotate f h = Annotate { runAnnotate :: h $ Identity -> First (h $ f) }
 
 instance Grammar (Annotate f) where
-    p ≪?≫ ann = Annotate (fmap (review p) . runAnnotate ann <=< First . preview p)
-    unit = Annotate (\(Const ()) -> pure (Const ()))
-    ann ≪*≫ ann' = Annotate (\(Pair h h') -> liftA2 Pair (runAnnotate ann h) (runAnnotate ann' h'))
+    p ≪?≫ ann = Annotate (fmap (review p (Proxy :: Proxy f)) . runAnnotate ann <=< First . preview p (Proxy :: Proxy Identity))
+    unit = Annotate (\() -> pure ())
+    ann ≪*≫ ann' = Annotate (\(h , h') -> liftA2 (,) (runAnnotate ann h) (runAnnotate ann' h'))
     empty = Annotate (\_ -> mempty)
     ann ≪|≫ ann' = Annotate (\h -> runAnnotate ann h <> runAnnotate ann' h)
     -- This is almost exactly the same as StringPrinter above.  How can we automate this?
@@ -107,12 +126,12 @@ instance Grammar (Annotate f) where
 
 instance Syntax (Annotate f) where
     symbol = const unit
-    char = Annotate (\(Const c) -> pure (Const c))
+    char = Annotate (\c -> pure c)
 
 -- When we are annotating with f, we can only have loci on shapes that have
 -- a defined semantics for f.
 instance (Semantics f h) => Locus h (Annotate f) where
-    locus (Annotate ann) = Annotate (\(Only (Identity h)) -> sem <$> ann h)
+    locus (Annotate ann) = Annotate (\(Identity h) -> sem (Proxy :: Proxy h) <$> ann h)
 
 
 -- The abstract syntax.  Note the pattern of recusion: f on top, Identity the
@@ -123,15 +142,15 @@ data ExprF f
     | Lit (f Char)
 
 -- These should be automatically generated.
-_Cat :: Prism' (ExprF f) ((Only Expr :*: Only Expr) f)
-_Cat = prism' (\(Pair (Only a) (Only b)) -> Cat a b)
-              (\case Cat a b -> Just (Pair (Only a) (Only b))
-                     _ -> Nothing)
+_Cat :: HPrism ExprF (Only Expr :*: Only Expr)
+_Cat = HPrism (\_ (a, b) -> Cat a b)
+              (\_ -> \case Cat a b -> Just (a,b)
+                           _ -> Nothing)
 
-_Lit :: Prism' (ExprF f) (Only Char f)
-_Lit = prism' (\(Only c) -> Lit c)
-              (\case Lit c -> Just (Only c)
-                     _ -> Nothing)
+_Lit :: HPrism ExprF (Only Char)
+_Lit = HPrism (\_ c -> Lit c)
+              (\_ -> \case Lit c -> Just c
+                           _ -> Nothing)
 
 -- The grammar.
 -- We collect the types that need to be given semantics into the synonym 'Loci'.
@@ -141,7 +160,7 @@ type Loci g = (Syntax g, Locus ExprF g, Locus (Const Char) g)
 expr :: (Loci g) => g (Only Expr)
 expr = locus $ choice
     [ symbol "(" *≫ (_Cat ≪?≫ expr ≪*≫ symbol " ++ " *≫ expr) ≪* symbol ")"
-    , _Lit ≪?≫ promoteConst char
+    , _Lit ≪?≫ locus char
     ]
 
 -- Evaluation semantics. (It's a shame that we need to coerce for promoteConst,
@@ -153,24 +172,24 @@ expr = locus $ choice
 newtype EvalSem a = EvalSem { getEvalSem :: String }
 
 instance Semantics EvalSem (Const Char) where
-    sem (Const c) = Only (EvalSem [c])
+    sem _ c = EvalSem [c]
 
 instance Semantics EvalSem ExprF where
-    sem (Cat x y) = Only . EvalSem $ getEvalSem x ++ getEvalSem y
-    sem (Lit x) = Only . EvalSem $ getEvalSem x
+    sem _ (Cat x y) = EvalSem $ getEvalSem x ++ getEvalSem y
+    sem _ (Lit x) = EvalSem $ getEvalSem x
     
 
 -- Example expression.
 pattern I :: a -> Identity a
 pattern I x = Identity x
 
-exampleExpr :: Only Expr Identity
-exampleExpr = Only (I (Cat (I (Cat (I (Lit (I 'a'))) (I (Lit (I 'b'))))) (I (Lit (I 'c')))))
+exampleExpr :: Expr
+exampleExpr = Cat (I (Cat (I (Lit (I 'a'))) (I (Lit (I 'b'))))) (I (Lit (I 'c')))
 
 
 main :: IO ()
 main = do
     -- Pretty print.
-    print $ runStringPrinter expr exampleExpr
+    print $ runStringPrinter expr (I exampleExpr)
     -- Evaluate.
-    print . fmap (getEvalSem . fromOnly) $ runAnnotate expr exampleExpr
+    print . fmap getEvalSem $ runAnnotate expr (I exampleExpr)
