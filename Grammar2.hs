@@ -16,22 +16,16 @@ module Grammar2 where
 import Control.Applicative (liftA2)
 import Control.Lens (Prism', prism', Iso', iso, preview, review)
 import Control.Monad ((<=<))
-import Data.Type.Coercion (Coercion(..), coerceWith)
 import Data.Functor.Const (Const(..))
 import Data.Functor.Identity (Identity(..))
 import Data.Monoid (First(..))
-import Data.Roles (Representational(..))
 import Rank2 (Product(..), Only(..))
 
 type (:*:) = Product
 
 -- A shape prism.  No funny business on the f, we use enough structural
 -- isomorphisms that you could mess everything up that way.
-type HPrism h' h = forall f. Representational f => Prism' (h' f) (h f)
-
--- Orphan!
-instance Representational Identity where
-    rep Coercion = Coercion
+type HPrism h' h = forall f. Prism' (h' f) (h f)
 
 infixr 4 ≪?≫
 infixr 5 ≪*≫, ≪*, *≫
@@ -69,9 +63,8 @@ class (Grammar g) => Locus h g where
 promoteConst :: (Grammar g, Locus (Const a) g) => g (Const a) -> g (Only a)
 promoteConst = (shuf ≪?≫) . locus
     where
-    shuf :: (Representational f) => Iso' (Only a f) (Only (Const a Identity) f)
-    shuf = iso (\(Only a) -> Only (coerceWith (rep Coercion) a)) 
-               (\(Only a) -> Only (coerceWith (rep Coercion) a))
+    shuf :: Iso' (Only a f) (Only (Const a Identity) f)
+    shuf = undefined
 
 {-
 newtype Parser a = Parser { runParser :: String -> Maybe (a, String) }
@@ -103,7 +96,7 @@ class Semantics f h where
 
 newtype Annotate f h = Annotate { runAnnotate :: h Identity -> First (h f) }
 
-instance (Representational f) => Grammar (Annotate f) where
+instance Grammar (Annotate f) where
     p ≪?≫ ann = Annotate (fmap (review p) . runAnnotate ann <=< First . preview p)
     unit = Annotate (\(Const ()) -> pure (Const ()))
     ann ≪*≫ ann' = Annotate (\(Pair h h') -> liftA2 Pair (runAnnotate ann h) (runAnnotate ann' h'))
@@ -112,13 +105,13 @@ instance (Representational f) => Grammar (Annotate f) where
     -- This is almost exactly the same as StringPrinter above.  How can we automate this?
     -- Only Identity `Rank2.Arrow` Compose First (Only f)
 
-instance (Representational f) => Syntax (Annotate f) where
+instance Syntax (Annotate f) where
     symbol = const unit
     char = Annotate (\(Const c) -> pure (Const c))
 
 -- When we are annotating with f, we can only have loci on shapes that have
 -- a defined semantics for f.
-instance (Representational f, Semantics f h) => Locus h (Annotate f) where
+instance (Semantics f h) => Locus h (Annotate f) where
     locus (Annotate ann) = Annotate (\(Only (Identity h)) -> sem <$> ann h)
 
 
@@ -158,8 +151,6 @@ expr = locus $ choice
 --
 -- We give a semantics to each type required by Loci.
 newtype EvalSem a = EvalSem { getEvalSem :: String }
-
-instance Representational EvalSem where rep Coercion = Coercion
 
 instance Semantics EvalSem (Const Char) where
     sem (Const c) = Only (EvalSem [c])
