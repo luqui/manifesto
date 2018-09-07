@@ -171,11 +171,12 @@ expr = locus $ choice
 -- There must be a better way.)
 --
 -- We give a semantics to each type required by Loci.
-data EvalSem a where
-    EChar :: Char -> EvalSem Char
-    EStr  :: String -> EvalSem Expr
+data family EvalSem a
+data instance EvalSem Char = EChar Char
+data instance EvalSem Expr = EStr String
 
-deriving instance Show (EvalSem a)
+deriving instance Show (EvalSem Char)
+deriving instance Show (EvalSem Expr)
 
 instance Semantics EvalSem (Const Char) where
     sem _ c = EChar c
