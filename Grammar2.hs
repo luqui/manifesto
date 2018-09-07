@@ -37,13 +37,10 @@ import Rank2 (Product(..), Only(..))
 -- as their semantics, but definitions get a (Name,Value) pair.
 type (:*:) = Product
 
-type family (h :: (* -> *) -> *) $ (f :: * -> *) :: * where
-    Const t $ f = t
-    Only t $ f = f t
-    (h :*: h') $ f = (h $ f, h' $ f)
-    h $ f = h f
+class Shape (h :: (k -> *) -> *) where
+    type h $ (f :: k -> *) :: *
+    type h $ f = h f
 
-class Shape h where
     toShapeConstr :: h $ f -> h f
     default toShapeConstr :: (h $ f) ~ h f => h $ f -> h f
     toShapeConstr = id
@@ -52,14 +49,17 @@ class Shape h where
     fromShapeConstr = id
 
 instance Shape (Const a) where
+    type Const a $ f = a
     toShapeConstr = Const
     fromShapeConstr = getConst
 
 instance Shape (Only a) where
+    type Only a $ f = f a
     toShapeConstr = Only
     fromShapeConstr = fromOnly
 
 instance (Shape h, Shape h') => Shape (Product h h') where
+    type Product h h' $ f = (h $ f, h' $ f)
     toShapeConstr (x,y) = Pair (toShapeConstr x) (toShapeConstr y)
     fromShapeConstr (Pair x y) = (fromShapeConstr x, fromShapeConstr y)
 
