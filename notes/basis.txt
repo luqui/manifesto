@@ -1,0 +1,83 @@
+So we have grammar specs that look like this:
+
+    expr = locus $
+         _Add ≪?≫ expr ≪*≫ expr
+     ≪|≫ _Lit ≪?≫ integer
+
+where ≪?≫ makes a grammar expression "conditional" on a prism.  Thus whenever
+we are running a grammar "backwards", we have these `Maybe`s that show up because
+the prism might not match.  But a nonmatch is not acceptable! It's a semantic
+hole.  We can't just fail to pretty print an expression because a constructor
+wasn't listed, for example.  So if the grammar is properly specified, the
+`Maybe` is, in the end, superfluous.
+
+The missing piece is that we expect all the prisms in a chain of alternatives
+to be a *complete basis*.  We expect every expression to match exactly one of
+them.  But, in the current phrasing of the library, we have no way to guarantee
+this, and it's causing all this partiality ugliness  (it's fine, but I'm a
+perfectionist!).
+
+One thing that would solve this would be to use the generic isomorphism between
+a shape and its algebraic presentation.  So we would just have
+
+        expr ≪*≫ expr
+    ≪|≫ integer
+
+where
+
+    (≪|≫) :: g h -> g h' -> g (h :+: h')
+
+which seems mathematically just right, but, sadly, I find it terribly
+unreadable.  I want those constructor names somewhere, and it would be great if
+I didn't have to put them in a certain order (though it's fine if their order is
+forced as long as I can see their names).  
+
+A case expression is the right idea
+
+    locus $ \case
+      Add{} -> expr ≪*≫ expr
+      Lit{} -> integer
+
+which is awfully hacky, especially since for a parser we would need to fabricate
+values to fill in Add with.  Oh yeah and it really doesn't work because the
+return type of the different branches of the case are different!  Rats! 
+
+Ok what about
+
+        #Add ≪$≫ expr ≪*≫ expr
+    ≪|≫ #Lit ≪$≫ integer
+
+using these symbols as sort of empty markers that are just required to
+typecheck.   This is just like the "mathematically just right" solution above
+but with constructor labels.  Order would be required.  The isomorphism would
+look like
+
+    ExprF <-> Case "Add" (Only Expr :*: Only Expr) :+: Case "Lit" (Only Integer)
+
+and
+
+    #Add :: Iso (Only Expr :*: Only Expr) (Case "Add" (Only Expr :*: Only Expr))
+
+except capitals are not allowed on overloaded labels, so
+
+    #_Add :: ...
+
+We could also just overload the labels in a non-generative way (which might be
+the only thing that is possible anyway), so
+
+    #_Add :: Iso h (Case "Add" h)
+
+And then I guess we would need a way to bundle it all up in the end, from the
+generic representation.  fromRep would do that maybe.  Except it doesn't stably
+associate across GHC versions.  Boooo.  And I kind of don't like this solution
+anyway, it is not very elegant.
+
+Am I shooting myself in the foot with this complete basis thing?  What about
+parens?  There we have two different cases which produce the same expression!
+Must I be forced to represent parentheses explicitly in my grammar!  Hell no,
+I'm not doing that, that is antithetical to the whole point of this project.
+
+A stopgap solution is to provide an annotation `complete` which just ensures
+that all the partiality has been squahed at a certain point, and throws an error
+if not (bc you forgot a case!).  Runtime error, not the best, but at least you
+know why when you pretty printer fails to print.
