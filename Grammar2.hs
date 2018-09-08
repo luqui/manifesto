@@ -3,15 +3,12 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -27,14 +24,14 @@ import Rank2 (Product(..), Only(..))
 
 -- Here Const, Only, and Product shapes are emulating their Rank2 combinators,
 -- but they are "virtual", in that they are simplified away by the ($) type
--- family before we ever see their constructors.  (I have hidden the
--- constructors just to make sure!) It means we have to pass a little more
--- explicit type information around, but it also means that we can omit those
--- nuissance constructors everywhere, and, more importantly, that semantics
--- functors need not be representational, which means that you can, for
--- example, use a GADT to have declare different value types corresponding to
--- different types of nodes in the AST.  For example, expressions get a Value
--- as their semantics, but definitions get a (Name,Value) pair.
+-- family before we ever see their constructors.  It means we have to pass a
+-- little more explicit type information around (which can be a pain), but it
+-- also means that we can omit those nuissance constructors everywhere, and,
+-- more importantly, that semantics functors need not be representational,
+-- which means that you can, for example, use a GADT to have declare different
+-- value types corresponding to different types of nodes in the AST.  For
+-- example, expressions get a Value as their "eval" semantics, but definitions
+-- get a (Name,Value) pair.
 type (:*:) = Product
 
 class Shape (h :: (k -> *) -> *) where
@@ -42,10 +39,10 @@ class Shape (h :: (k -> *) -> *) where
     type h $ f = h f
 
     toShapeConstr :: h $ f -> h f
-    default toShapeConstr :: (h $ f) ~ h f => h $ f -> h f
+    default toShapeConstr :: (h $ f ~ h f) => h $ f -> h f
     toShapeConstr = id
     fromShapeConstr :: h f -> h $ f
-    default fromShapeConstr :: (h $ f) ~ h f => h f -> h $ f
+    default fromShapeConstr :: (h $ f ~ h f) => h f -> h $ f
     fromShapeConstr = id
 
 instance Shape (Const a) where
@@ -63,9 +60,6 @@ instance (Shape h, Shape h') => Shape (Product h h') where
     toShapeConstr (x,y) = Pair (toShapeConstr x) (toShapeConstr y)
     fromShapeConstr (Pair x y) = (fromShapeConstr x, fromShapeConstr y)
 
-
--- A shape prism.  No funny business on the f, we use enough structural
--- isomorphisms that you could mess everything up that way.
 
 data Proxy p = Proxy
 
