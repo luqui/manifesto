@@ -4,6 +4,7 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf #-}
@@ -25,6 +26,7 @@ import Data.Functor.Const (Const(..))
 import Data.Functor.Identity (Identity(..))
 import Data.Monoid (First(..))
 import Rank2 (Product(..), Only(..))
+import qualified Rank2
 
 import qualified IncrementalParser as IP
 
@@ -41,7 +43,7 @@ import qualified IncrementalParser as IP
 -- get a (Name,Value) pair.
 type (:*:) = Product
 
-class Shape (h :: (k -> *) -> *) where
+class (Rank2.Functor h) => Shape (h :: (k -> *) -> *) where
     type h $ (f :: k -> *) :: *
     type h $ f = h f
 
@@ -51,6 +53,9 @@ class Shape (h :: (k -> *) -> *) where
     fromShapeConstr :: h f -> h $ f
     default fromShapeConstr :: (h $ f ~ h f) => h f -> h $ f
     fromShapeConstr = id
+
+instance Rank2.Functor (Const a) where
+    _ <$> Const x = Const x
 
 instance Shape (Const a) where
     type Const a $ f = a
@@ -67,6 +72,17 @@ instance (Shape h, Shape h') => Shape (Product h h') where
     toShapeConstr (x,y) = Pair (toShapeConstr x) (toShapeConstr y)
     fromShapeConstr (Pair x y) = (fromShapeConstr x, fromShapeConstr y)
 
+-- Literal is like Const but regular
+newtype Literal a f = Literal a
+    deriving (Show)
+
+instance Rank2.Functor (Literal a) where
+    _ <$> Literal a = Literal a
+
+_Literal :: HPrism (Literal a) (Const a)
+_Literal = HPrism (\_ -> Literal) (\_ (Literal x) -> Just x)
+
+instance Shape (Literal a)
 
 data Proxy p = Proxy
 
@@ -167,15 +183,29 @@ instance Syntax (Annotate f) where
 instance (Semantics f h) => Locus h (Annotate f) where
     locus (Annotate ann) = Annotate (\(Identity h) -> sem (Proxy :: Proxy h) <$> ann h)
 
-newtype Incomplete = Incomplete String
-    deriving (Show)
+
+data Annotated f a where
+    Annotated :: (h $ Identity ~ h Identity) => f (h $ Identity) -> h (Annotated f) -> Annotated f (h $ Identity)
+
+instance (Semantics f h, Shape h, h $ Identity ~ h Identity) => Semantics (Annotated f) h where
+    sem pxy hann = Annotated (sem pxy (fromShapeConstr hf)) shape
+        where
+        shape :: h (Annotated f)
+        shape = toShapeConstr hann
+        hf :: h f
+        hf = Rank2.fmap (\(Annotated fa _) -> fa) shape
+
 
 -- The abstract syntax.  Note the pattern of recusion: f on top, Identity the
 -- rest of the way down.
 type Expr = ExprF Identity
 data ExprF f
     = Cat (f Expr) (f Expr)
-    | Lit (f Char)
+    | Lit (f (Literal Char Identity))
+
+instance Rank2.Functor ExprF where
+    f <$> Cat a b = Cat (f a) (f b)
+    f <$> Lit c = Lit (f c)
 
 deriving instance Show (ExprF Identity) 
 deriving instance Show (ExprF (Const ())) 
@@ -188,20 +218,20 @@ _Cat = HPrism (\_ (a, b) -> Cat a b)
               (\_ -> \case Cat a b -> Just (a,b)
                            _ -> Nothing)
 
-_Lit :: HPrism ExprF (Only Char)
+_Lit :: HPrism ExprF (Only (Literal Char Identity))
 _Lit = HPrism (\_ c -> Lit c)
               (\_ -> \case Lit c -> Just c
                            _ -> Nothing)
 
 -- The grammar.
 -- We collect the types that need to be given semantics into the synonym 'Loci'.
-type Loci g = (Syntax g, Locus ExprF g, Locus (Const Char) g)
+type Loci g = (Syntax g, Locus ExprF g, Locus (Literal Char) g)
 
 -- Concrete syntax.
 expr1 :: (Loci g) => g ExprF
 expr1 = choice
     [ symbol "cat(" *≫ (_Cat ≪?≫ expr ≪*≫ symbol "," *≫ expr) ≪* symbol ")"
-    , symbol "'" *≫ (_Lit ≪?≫ locus char) ≪* symbol "'"
+    , symbol "'" *≫ (_Lit ≪?≫ locus (_Literal ≪?≫ char)) ≪* symbol "'"
     ]
 
 expr :: (Loci g) => g (Only Expr)
@@ -214,14 +244,14 @@ expr = locus expr1
 --
 -- We give a semantics to each type required by Loci.
 data family EvalSem a
-data instance EvalSem Char = EChar Char
+data instance EvalSem (Literal Char Identity) = EChar Char
     deriving Show
 data instance EvalSem Expr = EStr String
     deriving Show
 
 
-instance Semantics EvalSem (Const Char) where
-    sem _ c = EChar c
+instance Semantics EvalSem (Literal Char) where
+    sem _ (Literal c) = EChar c
 
 instance Semantics EvalSem ExprF where
     sem _ (Cat (EStr x) (EStr y)) = EStr (x ++ y)
@@ -232,15 +262,21 @@ pattern I :: a -> Identity a
 pattern I x = Identity x
 
 exampleExpr :: Expr
-exampleExpr = Cat (I (Cat (I (Lit (I 'a'))) (I (Lit (I 'b'))))) (I (Lit (I 'c')))
+exampleExpr = Cat (I (Cat (I (Lit (I (Literal 'a')))) (I (Lit (I (Literal 'b')))))) (I (Lit (I (Literal 'c'))))
 
 
 main :: IO ()
 main = do
     -- Pretty print.
-    --print $ runStringPrinter expr (I exampleExpr)
+    print $ runStringPrinter expr (I exampleExpr)
     -- Evaluate.
-    --print (runAnnotate expr (I exampleExpr) :: First (EvalSem Expr))
+    print (runAnnotate expr (I exampleExpr) :: First (EvalSem Expr))
+
+    -- Annotate
+    let ann = runAnnotate expr (I exampleExpr) :: First (Annotated EvalSem Expr)
+    case ann of
+        First (Just (Annotated _ (Cat (Annotated a _) _))) -> print a
+        _ -> putStrLn "pattern error"
 
     -- Parser
     print . IP.applyPrefix (runGParser expr1) $ "'x'"
