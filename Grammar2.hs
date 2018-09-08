@@ -26,6 +26,8 @@ import Data.Functor.Identity (Identity(..))
 import Data.Monoid (First(..))
 import Rank2 (Product(..), Only(..))
 
+import qualified IncrementalParser as IP
+
 
 -- Here Const, Only, and Product shapes are emulating their Rank2 combinators,
 -- but they are "virtual", in that they are simplified away by the ($) type
@@ -106,66 +108,8 @@ class (Grammar g) => Syntax g where
 class (Grammar g) => Locus h g where
     locus :: g h -> g (Only (h $ Identity))
 
-data Extremal a
-    = Impossible
-    | Indefinite
-    | Definite a
-    deriving (Functor, Show)
 
-instance Semigroup (Extremal a) where
-    Indefinite <> _ = Indefinite
-    Impossible <> x = x
-    _ <> Indefinite = Indefinite
-    x <> Impossible = x
-    Definite _ <> Definite _ = Indefinite
-
-instance Monoid (Extremal a) where
-    mempty = Impossible
-
-instance Applicative Extremal where
-    pure = Definite
-    Impossible <*> _ = Impossible
-    Indefinite <*> _ = Indefinite
-    _ <*> Impossible = Impossible
-    _ <*> Indefinite = Indefinite
-    Definite f <*> Definite x = Definite (f x)
-
-newtype Parser a = Parser { runParser :: String -> Extremal (String, a) }
-    deriving (Functor)
-
-instance Applicative Parser where
-    pure x = Parser (\i -> pure (i, x))
-    f <*> x = Parser (\i -> case runParser f i of
-        Impossible -> Impossible
-        Indefinite -> Indefinite
-        Definite (i', f') -> fmap f' <$> runParser x i')
-
-instance A.Alternative Parser where
-    empty = Parser mempty
-    a <|> b = Parser (runParser a <> runParser b)
-
-parseSymbol :: String -> Parser ()
-parseSymbol = Parser . strip
-    where
-    strip [] i = Definite (i, ())
-    strip (_:_) [] = Definite ("", ())
-    strip (s:ss) (i:is)
-        | s == i = strip ss is
-        | otherwise = Impossible
-    
-
-parseChar :: Parser Char
-parseChar = Parser $ \case
-    "" -> Indefinite
-    (c:cs) -> Definite (cs,c)
-
-eraseParser :: Parser a -> Parser ()
-eraseParser p = Parser $ \i -> case runParser p i of 
-    Definite (s,_) -> Definite (s,())
-    Indefinite -> Definite ("", ())
-    Impossible -> Impossible
-
-newtype GParser h = GParser { runGParser :: Parser (h $ Const ()) }
+newtype GParser h = GParser { runGParser :: IP.Parser (h $ Const ()) }
 
 instance Grammar GParser where
     p ≪?≫ gp = GParser . fmap (review p (Proxy @(Const ()))) $ runGParser gp
@@ -175,11 +119,11 @@ instance Grammar GParser where
     gp ≪|≫ gp' = GParser (runGParser gp A.<|> runGParser gp')
 
 instance Syntax GParser where
-    symbol s = GParser (parseSymbol s)
-    char = GParser parseChar
+    symbol s = GParser (IP.symbol s)
+    char = GParser IP.char
 
 instance Locus h GParser where
-    locus gp = GParser (Const <$> eraseParser (runGParser gp))
+    locus gp = GParser (Const <$> IP.erase (runGParser gp))
 
 
 
@@ -294,9 +238,9 @@ exampleExpr = Cat (I (Cat (I (Lit (I 'a'))) (I (Lit (I 'b'))))) (I (Lit (I 'c'))
 main :: IO ()
 main = do
     -- Pretty print.
-    print $ runStringPrinter expr (I exampleExpr)
+    --print $ runStringPrinter expr (I exampleExpr)
     -- Evaluate.
-    print (runAnnotate expr (I exampleExpr) :: First (EvalSem Expr))
+    --print (runAnnotate expr (I exampleExpr) :: First (EvalSem Expr))
 
     -- Parser
-    print $ runParser (runGParser expr1) "c"
+    print . IP.applyPrefix (runGParser expr1) $ "'x'"
