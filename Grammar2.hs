@@ -1,23 +1,29 @@
 {-# OPTIONS -Wall #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Grammar2 where
 
 import Control.Applicative (liftA2)
-import Control.Monad ((<=<))
+import qualified Control.Applicative as A
+import Control.Monad ((<=<), ap)
 import Data.Functor.Const (Const(..))
 import Data.Functor.Identity (Identity(..))
+import Data.List (isPrefixOf, stripPrefix)
 import Data.Monoid (First(..))
 import Rank2 (Product(..), Only(..))
 
@@ -101,18 +107,87 @@ class (Grammar g) => Syntax g where
 class (Grammar g) => Locus h g where
     locus :: g h -> g (Only (h $ Identity))
 
-{-
-newtype Parser a = Parser { runParser :: String -> Maybe (a, String) }
-newtype GParser h = GParser { runGParser :: Parser (h Parser) }
 
-instance Grammar Parser where
-instance Locus h Parser
--}
+data ParseBuffer a
+    = Parsed a
+    | ParseBuffer String (Parser a)
+    deriving (Functor)
+
+instance (Show a) => Show (ParseBuffer a) where
+    show (Parsed x) = show x
+    show (ParseBuffer s _) = "<" ++ s ++ "...>"
+
+data ParseResult a
+    = Success a String
+    | Buffer String (Parser a)
+    | Error
+    deriving (Functor)
+
+instance (Show a) => Show (ParseResult a) where
+    show (Success a buf) = show a ++ " ... " ++ buf
+    show (Buffer s _) = "<" ++ s ++ "...>"
+    show Error = "parse error"
+
+instance Semigroup (ParseResult a) where
+    Error <> r = r
+    r <> _ = r
+
+instance Monoid (ParseResult a) where
+    mempty = Error
+
+newtype Parser a = Parser { runParser :: String -> ParseResult a }
+    deriving (Functor)
+
+instance Monad Parser where
+    return x = Parser (Success x)
+    p >>= f = Parser (\i -> case runParser p i of
+        Success x i' -> runParser (f x) i'
+        Buffer r p' -> Buffer r (p' >>= f)
+        Error -> Error)
+
+instance Applicative Parser where
+    pure = return
+    (<*>) = ap
+
+instance A.Alternative Parser where
+    empty = Parser mempty
+    p <|> p' = Parser (runParser p <> runParser p')
+
+parseSymbol :: String -> Parser ()
+parseSymbol s = Parser $ \i -> 
+    if | Just i' <- stripPrefix s i -> Success () i'
+       | i `isPrefixOf` s -> Buffer i (parseSymbol s)
+       | otherwise -> Error
+
+parseChar :: Parser Char
+parseChar = Parser $ \case
+    "" -> Buffer "" parseChar
+    (c:cs) -> Success c cs
+
+
+newtype GParser h = GParser { runGParser :: Parser (h $ ParseBuffer) }
+
+instance Grammar GParser where
+    p ≪?≫ gp = GParser . fmap (review p (Proxy @ParseBuffer)) $ runGParser gp
+    unit = GParser (pure ())
+    gp ≪*≫ gp' = GParser (liftA2 (,) (runGParser gp) (runGParser gp'))
+    empty = GParser A.empty
+    gp ≪|≫ gp' = GParser (runGParser gp A.<|> runGParser gp')
+
+instance Syntax GParser where
+    symbol s = GParser (parseSymbol s)
+    char = GParser parseChar
+
+class PartialSyntax h where
+    makeHoles :: Proxy h -> h $ ParseBuffer -> h $ Identity
+
+instance (PartialSyntax h) => Locus h GParser where
+    locus gp = GParser (Parsed . makeHoles (Proxy @h) <$> runGParser gp)
 
 newtype StringPrinter h = StringPrinter { runStringPrinter :: (h $ Identity) -> First String }
 
 instance Grammar StringPrinter where
-    p ≪?≫ pp = StringPrinter (runStringPrinter pp <=< First . preview p (Proxy :: Proxy Identity))
+    p ≪?≫ pp = StringPrinter (runStringPrinter pp <=< First . preview p (Proxy @Identity))
     unit = StringPrinter (\() -> pure "")
     pp ≪*≫ pp' = StringPrinter (\(h , h') -> liftA2 (<>) (runStringPrinter pp h) (runStringPrinter pp' h'))
     empty = StringPrinter (\_ -> mempty)
@@ -149,6 +224,8 @@ instance Syntax (Annotate f) where
 instance (Semantics f h) => Locus h (Annotate f) where
     locus (Annotate ann) = Annotate (\(Identity h) -> sem (Proxy :: Proxy h) <$> ann h)
 
+newtype Incomplete = Incomplete String
+    deriving (Show)
 
 -- The abstract syntax.  Note the pattern of recusion: f on top, Identity the
 -- rest of the way down.
@@ -156,6 +233,9 @@ type Expr = ExprF Identity
 data ExprF f
     = Cat (f Expr) (f Expr)
     | Lit (f Char)
+    | Hole (f Incomplete)
+
+deriving instance Show (ExprF Identity) 
 
 instance Shape ExprF
 
@@ -170,6 +250,11 @@ _Lit = HPrism (\_ c -> Lit c)
               (\_ -> \case Lit c -> Just c
                            _ -> Nothing)
 
+_Hole :: HPrism ExprF (Only Incomplete)
+_Hole = HPrism (\_ i -> Hole i)
+               (\_ -> \case Hole i -> Just i
+                            _ -> Nothing)
+
 -- The grammar.
 -- We collect the types that need to be given semantics into the synonym 'Loci'.
 type Loci g = (Syntax g, Locus ExprF g, Locus (Const Char) g)
@@ -177,7 +262,7 @@ type Loci g = (Syntax g, Locus ExprF g, Locus (Const Char) g)
 -- Concrete syntax.
 expr :: (Loci g) => g (Only Expr)
 expr = locus $ choice
-    [ symbol "(" *≫ (_Cat ≪?≫ expr ≪*≫ symbol " ++ " *≫ expr) ≪* symbol ")"
+    [ symbol "cat(" *≫ (_Cat ≪?≫ expr ≪*≫ symbol "," *≫ expr) ≪* symbol ")"
     , _Lit ≪?≫ locus char
     ]
 
@@ -200,6 +285,20 @@ instance Semantics EvalSem (Const Char) where
 instance Semantics EvalSem ExprF where
     sem _ (Cat (EStr x) (EStr y)) = EStr (x ++ y)
     sem _ (Lit (EChar x)) = EStr [x]
+    sem _ (Hole _) = EStr "???"
+
+instance PartialSyntax (Const Char) where
+    makeHoles _ = id
+    
+instance PartialSyntax ExprF where
+    makeHoles _ (Cat x y) = Cat (Identity (toHole x)) (Identity (toHole y))
+        where
+        toHole (Parsed v) = v
+        toHole (ParseBuffer buf _) = Hole (Identity (Incomplete buf))
+    makeHoles _ (Lit (Parsed c)) = Lit (Identity c)
+    makeHoles _ (Lit (ParseBuffer buf _)) = Hole (Identity (Incomplete buf))
+    makeHoles _ (Hole _) = error "Make hole out of hole?"
+    
     
 
 -- Example expression.
@@ -216,3 +315,6 @@ main = do
     print $ runStringPrinter expr (I exampleExpr)
     -- Evaluate.
     print (runAnnotate expr (I exampleExpr) :: First (EvalSem Expr))
+
+    -- Parser
+    print $ runParser (runGParser expr) "cat(a,cat(b,c))"

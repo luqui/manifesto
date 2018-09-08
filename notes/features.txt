@@ -1,6 +1,7 @@
 Typed holes / agda-style interactive type-driven programming
 Semantic find/replace
 Alpha & beta reduce & expand
+Structural search: i.e. /class _ => Foo/
 
 
 One interesting use case is to open the editor on the type/theorem, so that
