@@ -52,7 +52,7 @@ class (Alternative p) => Syntax p where
     --  (use to erase infinite grammars to make them finitely approximable)
     erase :: p a -> p ()
     -- erase': strict erasure -- approximations allowed to fail
-    --   (use to erase finite terms for accurate approximations)
+    --   (use to erase finite terms for "timely" approximations)
     erase' :: p a -> p ()
     matchingChar :: (Char -> Bool) -> p Char
 
