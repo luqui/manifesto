@@ -279,4 +279,4 @@ main = do
         _ -> putStrLn "pattern error"
 
     -- Parser
-    print . IP.approximate . IP.applyPrefix (runGParser expr1) $ "c"
+    print . IP.approximate . IP.applyPrefix (runGParser expr1) $ "cat("

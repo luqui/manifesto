@@ -19,9 +19,9 @@ instance Show a => Show (Ambiguous a) where
     show (Definite x) = show x
 
 instance Semigroup (Ambiguous a) where
-    Empty <> x = x
+    Empty <> a = a
     Indefinite <> _ = Indefinite
-    x <> Empty = x
+    a <> Empty = a
     _ <> _ = Indefinite
 
 instance Monoid (Ambiguous a) where
@@ -41,12 +41,19 @@ instance Alternative Ambiguous where
     (<|>) = (<>)
 
 instance Syntax Ambiguous where
-    erase Empty = Empty
     erase _ = Definite ()
+
+    erase' Empty = Empty
+    erase' _ = Definite ()
     matchingChar _ = Indefinite
 
 class (Alternative p) => Syntax p where
+    -- erase: non-strict erasue -- approximation always succeeds
+    --  (use to erase infinite grammars to make them finitely approximable)
     erase :: p a -> p ()
+    -- erase': strict erasure -- approximations allowed to fail
+    --   (use to erase finite terms for accurate approximations)
+    erase' :: p a -> p ()
     matchingChar :: (Char -> Bool) -> p Char
 
 data Parser a = Parser (Ambiguous a) (First a) (Maybe (Char -> Parser a))
@@ -75,6 +82,7 @@ instance Alternative Parser where
 
 instance Syntax Parser where
     erase (Parser xr xv xc) = Parser (erase xr) (() <$ xv) ((fmap.fmap) erase xc)
+    erase' (Parser xr xv xc) = Parser (erase' xr) (() <$ xv) ((fmap.fmap) erase' xc)
     matchingChar p = Parser Indefinite mempty . pure $ \ch ->
         if p ch then pure ch else mempty
     
@@ -82,7 +90,7 @@ char :: (Syntax p) => p Char
 char = matchingChar (const True)
 
 exactChar :: (Syntax p) => Char -> p ()
-exactChar ch = erase (matchingChar (== ch))
+exactChar ch = erase' (matchingChar (== ch))
 
 matching :: (Char -> Bool) -> Parser String
 matching p = pure "" <|> ((:) <$> matchingChar p <*> matching p)
