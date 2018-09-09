@@ -3,93 +3,104 @@
 
 module IncrementalParser where
 
-import Control.Applicative (Alternative(..))
+import Control.Applicative (Alternative(..), liftA2)
+import Data.Foldable (traverse_)
+import Data.Monoid (First(..))
 
 data Ambiguous a
     = Empty
-    | Indefinite
     | Definite a
+    | Indefinite
     deriving (Functor)
 
 instance Show a => Show (Ambiguous a) where
-    show Empty = "<error>"
+    show Empty = "<empty>"
     show Indefinite = "<indefinite>"
     show (Definite x) = show x
 
-eraseAmbig :: Ambiguous a -> Ambiguous ()
-eraseAmbig Empty = Empty
-eraseAmbig _ = Definite ()
-
 instance Semigroup (Ambiguous a) where
     Empty <> x = x
-    x <> Empty = x
     Indefinite <> _ = Indefinite
-    _ <> Indefinite = Indefinite
-    Definite _ <> Definite _ = Indefinite
+    x <> Empty = x
+    _ <> _ = Indefinite
 
 instance Monoid (Ambiguous a) where
     mempty = Empty
 
 instance Applicative Ambiguous where
     pure = Definite
-    Empty <*> _ = Empty
-    _ <*> Empty = Empty
-    Indefinite <*> _ = Indefinite
-    _ <*> Indefinite = Indefinite
-    Definite f <*> Definite x = Definite (f x)
 
-data Parser a = Ambiguous a :> Maybe (Char -> Parser a)
+    Empty <*> _ = Empty
+    Definite f <*> x = f <$> x
+    --Indefinite <*> Empty = Empty  -- Though technically correct, this is not lazy enough
+                                    -- for our purposes.
+    Indefinite <*> _ = Indefinite
+
+instance Alternative Ambiguous where
+    empty = mempty
+    (<|>) = (<>)
+
+instance Syntax Ambiguous where
+    erase Empty = Empty
+    erase _ = Definite ()
+    matchingChar _ = Indefinite
+
+class (Alternative p) => Syntax p where
+    erase :: p a -> p ()
+    matchingChar :: (Char -> Bool) -> p Char
+
+data Parser a = Parser (Ambiguous a) (First a) (Maybe (Char -> Parser a))
     deriving (Functor)
 
-instance (Show a) => Show (Parser a) where
-    show (x :> xs) = show x ++ maybe "" (const "...") xs
+instance Applicative Parser where
+    pure x = Parser (pure x) (pure x) mempty
+    Parser fr fv fc <*> ~x@(Parser xr xv xc) = 
+        Parser (fr <*> xr)
+               (fv <*> xv)
+               ((fmap.fmap) (<*> x) fc
+                <|> liftA2 (fmap . fmap) (getFirst fv) xc)
 
 instance Semigroup (Parser a) where
-    ~(x :> xc) <> ~(y :> yc) = (x <> y) :> (xc <> yc)
+    Parser xr xv xc <> ~(Parser yr yv yc) = 
+        Parser (xr <> yr)
+               (xv <> yv)
+               (xc <> yc)
 
 instance Monoid (Parser a) where
-    mempty = mempty :> mempty
-
-instance Applicative Parser where
-    pure x = Definite x :> Nothing
-
-    (f :> fc) <*> (x :> xc) = 
-        (f <*> x) :> ((fmap.fmap) (<*> (x :> xc)) fc
-                  <|> (fmap.fmap) ((f :> fc) <*>) xc)
-                                                
+    mempty = Parser mempty mempty mempty
 
 instance Alternative Parser where
     empty = mempty
     (<|>) = (<>)
 
-char :: Parser Char
-char = Empty :> Just pure
+instance Syntax Parser where
+    erase (Parser xr xv xc) = Parser (erase xr) (() <$ xv) ((fmap.fmap) erase xc)
+    matchingChar p = Parser Indefinite mempty . pure $ \ch ->
+        if p ch then pure ch else mempty
+    
+char :: (Syntax p) => p Char
+char = matchingChar (const True)
 
-matchingChar :: (Char -> Bool) -> Parser Char
-matchingChar p = Empty :> Just (\ch -> if p ch then pure ch else empty)
+exactChar :: (Syntax p) => Char -> p ()
+exactChar ch = erase (matchingChar (== ch))
 
 matching :: (Char -> Bool) -> Parser String
 matching p = pure "" <|> ((:) <$> matchingChar p <*> matching p)
 
 symbol :: String -> Parser ()
-symbol [] = Definite () :> Nothing
-symbol (c:cs) = Empty :> Just (\ch ->
-    if c == ch
-        then symbol cs
-        else empty)
+symbol = traverse_ exactChar
 
--- This is key!  Semantically almost the same as fmap (const ()), but
--- since the result is now completely predictable, Indefinite results
--- become Definite ().
-erase :: Parser a -> Parser ()
-erase (x :> c) = eraseAmbig x :> (fmap.fmap) erase c
+approximate :: Parser a -> Ambiguous a
+approximate (Parser pr _ _) = pr
+
+runParser :: Parser a -> (Maybe a, Maybe (Char -> Parser a))
+runParser (Parser _ pv pc) = (getFirst pv, pc)
 
 applyChar :: Parser a -> Char -> Parser a
-applyChar (_ :> Nothing) _ = empty
-applyChar (_ :> Just c) ch = c ch
+applyChar p ch = maybe empty ($ ch) (snd (runParser p))
 
 applyPrefix :: Parser a -> String -> Parser a
 applyPrefix = foldl applyChar
 
-get :: Parser a -> Ambiguous a
-get (x :> _) = x
+get :: Parser a -> Maybe a
+get = fst . runParser
