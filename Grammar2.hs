@@ -28,7 +28,7 @@ import Data.Monoid (First(..))
 import Rank2 (Product(..), Only(..))
 import qualified Rank2
 
-import qualified IncrementalParser as IP
+import qualified ApproximationParser as AP
 
 
 -- Here Const, Only, and Product shapes are emulating their Rank2 combinators,
@@ -125,7 +125,7 @@ class (Grammar g) => Locus h g where
     locus :: g h -> g (Only (h $ Identity))
 
 
-newtype GParser h = GParser { runGParser :: IP.Parser (h $ Const ()) }
+newtype GParser h = GParser { runGParser :: AP.Parser (h $ Const ()) }
 
 instance Grammar GParser where
     p ≪?≫ gp = GParser . fmap (review p (Proxy @(Const ()))) $ runGParser gp
@@ -135,11 +135,11 @@ instance Grammar GParser where
     gp ≪|≫ gp' = GParser (runGParser gp A.<|> runGParser gp')
 
 instance Syntax GParser where
-    symbol s = GParser (IP.symbol s)
-    char = GParser IP.char
+    symbol s = GParser (AP.symbol s)
+    char = GParser AP.char
 
 instance Locus h GParser where
-    locus gp = GParser (Const <$> IP.erase (runGParser gp))
+    locus gp = GParser (Const <$> AP.erase (runGParser gp))
 
 
 
@@ -279,4 +279,4 @@ main = do
         _ -> putStrLn "pattern error"
 
     -- Parser
-    print . IP.approximate . IP.applyPrefix (runGParser expr1) $ "cat("
+    print . AP.approximate . AP.applyPrefix (runGParser expr1) $ "cat("

@@ -1,33 +1,33 @@
 {-# OPTIONS -Wall #-}
 {-# LANGUAGE DeriveFunctor #-}
 
-module IncrementalParser where
+module ApproximationParser where
 
 import Control.Applicative (Alternative(..), liftA2)
 import Data.Foldable (traverse_)
 import Data.Monoid (First(..))
 
-data Ambiguous a
+data Approx a
     = Empty
     | Definite a
     | Indefinite
     deriving (Functor)
 
-instance Show a => Show (Ambiguous a) where
+instance Show a => Show (Approx a) where
     show Empty = "<empty>"
     show Indefinite = "<indefinite>"
     show (Definite x) = show x
 
-instance Semigroup (Ambiguous a) where
+instance Semigroup (Approx a) where
     Empty <> a = a
     Indefinite <> _ = Indefinite
     a <> Empty = a
     _ <> _ = Indefinite
 
-instance Monoid (Ambiguous a) where
+instance Monoid (Approx a) where
     mempty = Empty
 
-instance Applicative Ambiguous where
+instance Applicative Approx where
     pure = Definite
 
     Empty <*> _ = Empty
@@ -36,11 +36,11 @@ instance Applicative Ambiguous where
                                     -- for our purposes.
     Indefinite <*> _ = Indefinite
 
-instance Alternative Ambiguous where
+instance Alternative Approx where
     empty = mempty
     (<|>) = (<>)
 
-instance Syntax Ambiguous where
+instance Syntax Approx where
     erase _ = Definite ()
 
     erase' Empty = Empty
@@ -56,7 +56,7 @@ class (Alternative p) => Syntax p where
     erase' :: p a -> p ()
     matchingChar :: (Char -> Bool) -> p Char
 
-data Parser a = Parser (Ambiguous a) (First a) (Maybe (Char -> Parser a))
+data Parser a = Parser (Approx a) (First a) (Maybe (Char -> Parser a))
     deriving (Functor)
 
 instance Applicative Parser where
@@ -98,7 +98,7 @@ matching p = pure "" <|> ((:) <$> matchingChar p <*> matching p)
 symbol :: String -> Parser ()
 symbol = traverse_ exactChar
 
-approximate :: Parser a -> Ambiguous a
+approximate :: Parser a -> Approx a
 approximate (Parser pr _ _) = pr
 
 runParser :: Parser a -> (Maybe a, Maybe (Char -> Parser a))
