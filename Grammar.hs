@@ -27,7 +27,20 @@ import qualified Rank2
 
 import qualified ApproximationParser as AP
 
+-- A bit of "dialect"
 type (:*:) = Product
+
+-- The same as Data.Functor.Const, but matching the naming pattern for
+-- readability.
+newtype LiteralF a f = Literal a
+    deriving (Eq, Ord, Read, Show)
+type Literal a = LiteralF a Identity
+
+instance Rank2.Functor (LiteralF a) where
+    _ <$> Literal a = Literal a
+
+_Literal :: HPrism (LiteralF a) (Const a)
+_Literal = Prism (\(Const x) -> Literal x) (\(Literal x) -> Just (Const x))
 
 -- TODO: PR this into Rank2
 instance Rank2.Functor (Const a) where
@@ -62,7 +75,7 @@ s *≫ g = leftUnit ≪?≫ (s ≪*≫ g)
 g ≪* s = rightUnit ≪?≫ (g ≪*≫ s)
     where
     rightUnit :: HPrism h (h :*: Const ())
-    rightUnit = Prism (\(Pair x (Const ()))-> x) 
+    rightUnit = Prism (\(Pair x (Const ())) -> x) 
                       (\x -> Just (Pair x (Const ())))
 
 choice :: (Grammar g) => [g h] -> g h
@@ -142,8 +155,6 @@ instance (Semantics f h, Rank2.Functor h) => Semantics (Annotated f) h where
         hf :: h f
         hf = Rank2.fmap (\(Annotated fa _) -> fa) hann
 
-type Literal x = Const x Identity
-
 -- The abstract syntax.  Note the pattern of recusion: f on top, Identity the
 -- rest of the way down.
 type Expr = ExprF Identity
@@ -172,13 +183,13 @@ _Lit = Prism (\(Only c) -> Lit c)
 
 -- The grammar.
 -- We collect the types that need to be given semantics into the synonym 'Loci'.
-type Loci g = (Syntax g, Locus ExprF g, Locus (Const Char) g)
+type Loci g = (Syntax g, Locus ExprF g, Locus (LiteralF Char) g)
 
 -- Concrete syntax.
 expr1 :: (Loci g) => g ExprF
 expr1 = choice
     [ symbol "cat(" *≫ (_Cat ≪?≫ expr ≪*≫ symbol "," *≫ expr) ≪* symbol ")"
-    , symbol "'" *≫ (_Lit ≪?≫ locus char) ≪* symbol "'"
+    , symbol "'" *≫ (_Lit ≪?≫ locus (_Literal ≪?≫ char)) ≪* symbol "'"
     ]
 
 expr :: (Loci g) => g (Only Expr)
@@ -197,8 +208,8 @@ data instance EvalSem Expr = EStr String
     deriving Show
 
 
-instance Semantics EvalSem (Const Char) where
-    sem (Const c) = EChar c
+instance Semantics EvalSem (LiteralF Char) where
+    sem (Literal c) = EChar c
 
 instance Semantics EvalSem ExprF where
     sem (Cat (EStr x) (EStr y)) = EStr (x ++ y)
@@ -209,7 +220,7 @@ pattern I :: a -> Identity a
 pattern I x = Identity x
 
 exampleExpr :: Expr
-exampleExpr = Cat (I (Cat (I (Lit (I (Const 'a')))) (I (Lit (I (Const 'b')))))) (I (Lit (I (Const 'c'))))
+exampleExpr = Cat (I (Cat (I (Lit (I (Literal 'a')))) (I (Lit (I (Literal 'b')))))) (I (Lit (I (Literal 'c'))))
 
 
 main :: IO ()
