@@ -1,0 +1,14 @@
+Long goal: awesome structural editor library with a grammar for Haskell
+Mid goal: equational reasoner for some simple language, e.g. lambda calculus + some junk
+  Ouputs equality proofs for the edits
+Short goal: Structural editor for a simple language, e.g. lambda calculus + infix operators
+Proof of concept: Reproduce Sexp.hs in the new architecture
+
+Possible next steps (in increasing order of difficulty estimate)
+* Navigation
+* Node-specialized commands
+* Flesh out syntax/pretty printing API
+* String editing
+* Patterns & rewrites  (difficult bc of pattern parsing)
+* Left-associative productions
+* Associative operators
