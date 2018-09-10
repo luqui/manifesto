@@ -89,6 +89,15 @@ newtype Editor i h = Editor { runEditor :: i -> Located h -> First (Located h, E
 
 type Open r = r -> r
 
+basicMotionHelp :: [String]
+basicMotionHelp = [
+    "Motions:",
+    "h,j : small/big step left",
+    "l,k : small/big step right",
+    "o : step out",
+    "<Shift>+<Motion>: \"drill\" (repeat as much as possible)"
+    ]
+
 basicMotion :: Open (Editor Char h)
 basicMotion cont = mconcat  
     [ entry 'h' smallleft
@@ -141,6 +150,16 @@ textEditMode cont = Editor $ \i (Located cx (SExp h es)) ->
        | otherwise -> 
         return (Located cx (SExp (h ++ [i]) es), textEditMode cont)
 
+editHelp :: [String]
+editHelp = [
+    "Edits:",
+    "e : edit head",
+    "a,A : new child/sibling after",
+    "i,I : new child/sibling before",
+    "d : delete",
+    "<Esc>: exit edit mode" ]
+    
+
 editCommands :: Open (Editor Char String)
 editCommands cont = Editor $ \i loc ->
     case i of
@@ -183,16 +202,17 @@ exampleExp = Located [] $ SExp TLambda [SExp (TVar "f") [],
 main :: IO ()
 main = do
     hSetBuffering stdin NoBuffering
-    go exampleExp (fix basicMotion)
+    go lispViewer example mainEditor
   where
-    go s editor = do
+    go viewer s editor = do
         ANSI.clearScreen
         ANSI.setCursorPosition 0 0
-        PP.renderIO stdout . PP.layoutPretty options . ansify $ viewLoc expViewer s False False
+        PP.renderIO stdout . PP.layoutPretty options . ansify $ viewLoc viewer s
+        putStrLn . unlines $ ["",""] ++ basicMotionHelp ++ [""] ++ editHelp
         c <- getChar
         case runEditor editor c s of
-            First Nothing -> go s editor
-            First (Just (s', editor')) -> go s' editor'
+            First Nothing -> go viewer s editor
+            First (Just (s', editor')) -> go viewer s' editor'
     ansify = PP.alterAnnotations $ \case
         Focused -> [PP.bgColor PP.White, PP.color PP.Black]
     options = PP.LayoutOptions { PP.layoutPageWidth = PP.AvailablePerLine 50 1.0 }
