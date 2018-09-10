@@ -67,10 +67,15 @@ pattern I x = Identity x
 instance Rank2.Functor (Const a) where
     _ <$> Const x = Const x
 
+-- N.B. The arguments are reversed from the prism in lens.
 data Prism a b = Prism { 
     review  :: a -> b,
     preview :: b -> Maybe a
   }
+
+instance Category Prism where
+    id = Prism id pure
+    Prism to from . Prism to' from' = Prism (to . to') (from' <=< from)
 
 type HPrism h h' = forall f. Prism (h f) (h' f)
 
