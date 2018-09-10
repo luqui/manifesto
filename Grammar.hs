@@ -1,23 +1,20 @@
-{-# OPTIONS -Wall #-}
+{-# OPTIONS -Wall -fno-warn-orphans #-}
 {-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Grammar2 where
+module Grammar where
 
 import Control.Applicative (liftA2)
 import qualified Control.Applicative as A
@@ -32,6 +29,7 @@ import qualified ApproximationParser as AP
 
 type (:*:) = Product
 
+-- TODO: PR this into Rank2
 instance Rank2.Functor (Const a) where
     _ <$> Const x = Const x
 
