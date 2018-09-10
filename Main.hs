@@ -49,7 +49,7 @@ type Loci g = (Syntax g, Locus ExprF g, Locus (LiteralF Char) g)
 expr1 :: (Loci g) => g ExprF
 expr1 = choice
     [ symbol "cat(" *≫ (_Cat ≪?≫ expr ≪*≫ symbol "," *≫ expr) ≪* symbol ")"
-    , symbol "'" *≫ (_Lit ≪?≫ locus (_Literal ≪?≫ char)) ≪* symbol "'"
+    , symbol "'" *≫ (_Lit ≪?≫ literal char) ≪* symbol "'"
     ]
 
 expr :: (Loci g) => g (Only Expr)

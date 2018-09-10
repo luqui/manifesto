@@ -21,7 +21,7 @@ module Grammar
     , Prism(..), type HPrism
     , Only(..)
 
-    , Grammar(..), Locus(..), (≪*), (*≫), choice
+    , Grammar(..), Locus(..), literal, (≪*), (*≫), choice
 
     , Syntax(..)
     , GParser(..)
@@ -87,6 +87,9 @@ class Grammar g where
 
 class (Grammar g) => Locus h g where
     locus :: g h -> g (Only (h Identity))
+
+literal :: (Locus (LiteralF a) g) => g (Const a) -> g (Only (Literal a))
+literal = locus . (_Literal ≪?≫)
 
 (*≫) :: (Grammar g) => g (Const ()) -> g h -> g h
 s *≫ g = leftUnit ≪?≫ (s ≪*≫ g)
