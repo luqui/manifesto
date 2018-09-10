@@ -92,10 +92,10 @@ type Open r = r -> r
 basicMotionHelp :: [String]
 basicMotionHelp = [
     "Motions:",
-    "h,j : small/big step left",
-    "l,k : small/big step right",
-    "o : step out",
-    "<Shift>+<Motion>: \"drill\" (repeat as much as possible)"
+    "  h,j : small/big step left",
+    "  l,k : small/big step right",
+    "  o : step out",
+    "  <Shift>+<Motion>: \"drill\" (repeat as much as possible)"
     ]
 
 basicMotion :: Open (Editor Char h)
@@ -153,11 +153,11 @@ textEditMode cont = Editor $ \i (Located cx (SExp h es)) ->
 editHelp :: [String]
 editHelp = [
     "Edits:",
-    "e : edit head",
-    "a,A : new child/sibling after",
-    "i,I : new child/sibling before",
-    "d : delete",
-    "<Esc>: exit edit mode" ]
+    "  e : edit head",
+    "  a,A : new child/sibling after",
+    "  i,I : new child/sibling before",
+    "  d : delete",
+    "  <Esc>: exit edit mode" ]
     
 
 editCommands :: Open (Editor Char String)
