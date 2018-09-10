@@ -14,10 +14,27 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Grammar where
+module Grammar 
+    ( Product(..), type (:*:)
+    , LiteralF(..), type Literal, _Literal
+    , type I, pattern I, Const(..)
+    , Prism(..), type HPrism
+    , Only(..)
 
+    , Grammar(..), Locus(..), (≪*), (*≫), choice
+
+    , Syntax(..)
+    , GParser(..)
+    , StringPrinter(..)
+    , Annotate(..), Semantics(..)
+    , Annotated(..)
+    )
+where
+
+import Prelude hiding (id, (.))
 import Control.Applicative (liftA2)
 import qualified Control.Applicative as A
+import Control.Category (Category(..))
 import Control.Monad ((<=<))
 import Data.Functor.Const (Const(..))
 import Data.Functor.Identity (Identity(..))
@@ -39,42 +56,49 @@ type Literal a = LiteralF a Identity
 instance Rank2.Functor (LiteralF a) where
     _ <$> Literal a = Literal a
 
-_Literal :: HPrism (LiteralF a) (Const a)
+_Literal :: HPrism (Const a) (LiteralF a)
 _Literal = Prism (\(Const x) -> Literal x) (\(Literal x) -> Just (Const x))
+
+type I = Identity
+pattern I :: a -> I a
+pattern I x = Identity x
 
 -- TODO: PR this into Rank2
 instance Rank2.Functor (Const a) where
     _ <$> Const x = Const x
 
-data Prism b a = Prism { 
+data Prism a b = Prism { 
     review  :: a -> b,
     preview :: b -> Maybe a
   }
 
-type HPrism h' h = forall f. Prism (h' f) (h f)
+type HPrism h h' = forall f. Prism (h f) (h' f)
 
 infixr 4 ≪?≫
 infixr 5 ≪*≫, ≪*, *≫
 infixr 3 ≪|≫
 -- A Grammar is a monoidal functor from some prism category to Hask.
 class Grammar g where
-    (≪?≫) :: HPrism h' h -> g h -> g h'
+    (≪?≫) :: HPrism h h' -> g h -> g h'
     unit  :: g (Const ())
     (≪*≫) :: g h -> g h' -> g (h :*: h')
     empty :: g h
     (≪|≫) :: g h -> g h -> g h
 
+class (Grammar g) => Locus h g where
+    locus :: g h -> g (Only (h Identity))
+
 (*≫) :: (Grammar g) => g (Const ()) -> g h -> g h
 s *≫ g = leftUnit ≪?≫ (s ≪*≫ g)
     where
-    leftUnit :: HPrism h (Const () :*: h)
+    leftUnit :: HPrism (Const () :*: h) h
     leftUnit = Prism (\(Pair (Const ()) x) -> x) 
                      (\x -> Just (Pair (Const ()) x))
 
 (≪*) :: (Grammar g) => g h -> g (Const ()) -> g h
 g ≪* s = rightUnit ≪?≫ (g ≪*≫ s)
     where
-    rightUnit :: HPrism h (h :*: Const ())
+    rightUnit :: HPrism (h :*: Const ()) h
     rightUnit = Prism (\(Pair x (Const ())) -> x) 
                       (\x -> Just (Pair x (Const ())))
 
@@ -84,9 +108,6 @@ choice = foldr (≪|≫) empty
 class (Grammar g) => Syntax g where
     symbol :: String -> g (Const ())
     char :: g (Const Char)
-
-class (Grammar g) => Locus h g where
-    locus :: g h -> g (Only (h Identity))
 
 
 newtype GParser h = GParser { runGParser :: AP.Parser (h (Const ())) }
@@ -155,86 +176,3 @@ instance (Semantics f h, Rank2.Functor h) => Semantics (Annotated f) h where
         hf :: h f
         hf = Rank2.fmap (\(Annotated fa _) -> fa) hann
 
--- The abstract syntax.  Note the pattern of recusion: f on top, Identity the
--- rest of the way down.
-type Expr = ExprF Identity
-data ExprF f
-    = Cat (f Expr) (f Expr)
-    | Lit (f (Literal Char))
-
-instance Rank2.Functor ExprF where
-    f <$> Cat a b = Cat (f a) (f b)
-    f <$> Lit c = Lit (f c)
-
-deriving instance Show (ExprF Identity) 
-deriving instance Show (ExprF (Const ())) 
-
-
--- These should be automatically generated.
-_Cat :: HPrism ExprF (Only Expr :*: Only Expr)
-_Cat = Prism (\(Pair (Only a) (Only b)) -> Cat a b)
-             (\case Cat a b -> Just (Pair (Only a) (Only b))
-                    _ -> Nothing)
-
-_Lit :: HPrism ExprF (Only (Literal Char))
-_Lit = Prism (\(Only c) -> Lit c)
-             (\case Lit c -> Just (Only c)
-                    _ -> Nothing)
-
--- The grammar.
--- We collect the types that need to be given semantics into the synonym 'Loci'.
-type Loci g = (Syntax g, Locus ExprF g, Locus (LiteralF Char) g)
-
--- Concrete syntax.
-expr1 :: (Loci g) => g ExprF
-expr1 = choice
-    [ symbol "cat(" *≫ (_Cat ≪?≫ expr ≪*≫ symbol "," *≫ expr) ≪* symbol ")"
-    , symbol "'" *≫ (_Lit ≪?≫ locus (_Literal ≪?≫ char)) ≪* symbol "'"
-    ]
-
-expr :: (Loci g) => g (Only Expr)
-expr = locus expr1
-
--- Evaluation semantics. (It's a shame that we need to coerce for promoteConst,
--- that's what's causing all this Representational junk.  If not, EvalSem could
--- even be a GADT showing how to evaluate each type of representable thing.
--- There must be a better way.)
---
--- We give a semantics to each type required by Loci.
-data family EvalSem a
-data instance EvalSem (Literal Char) = EChar Char
-    deriving Show
-data instance EvalSem Expr = EStr String
-    deriving Show
-
-
-instance Semantics EvalSem (LiteralF Char) where
-    sem (Literal c) = EChar c
-
-instance Semantics EvalSem ExprF where
-    sem (Cat (EStr x) (EStr y)) = EStr (x ++ y)
-    sem (Lit (EChar x)) = EStr [x]
-
--- Example expression.
-pattern I :: a -> Identity a
-pattern I x = Identity x
-
-exampleExpr :: Expr
-exampleExpr = Cat (I (Cat (I (Lit (I (Literal 'a')))) (I (Lit (I (Literal 'b')))))) (I (Lit (I (Literal 'c'))))
-
-
-main :: IO ()
-main = do
-    -- Pretty print.
-    print $ runStringPrinter expr (Only (I exampleExpr))
-    -- Evaluate.
-    print (fromOnly <$> runAnnotate expr (Only (I exampleExpr)) :: First (EvalSem Expr))
-
-    -- Annotate
-    let ann = fromOnly <$> runAnnotate expr (Only (I exampleExpr)) :: First (Annotated EvalSem Expr)
-    case ann of
-        First (Just (Annotated _ (Cat (Annotated a _) _))) -> print a
-        _ -> putStrLn "pattern error"
-
-    -- Parser
-    print . AP.approximate . AP.applyPrefix (runGParser expr1) $ "cat("
