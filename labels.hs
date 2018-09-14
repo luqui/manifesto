@@ -78,3 +78,5 @@ data Baz f = Baz (f (Lit Bool)) (f Ann) (f (Mabel Baz))
 type BarM = Bar 'Mabel
 
 -- Seems like there is a lot of power here.  I don't know how to use it yet.
+
+data Demote = forall a. Demote 

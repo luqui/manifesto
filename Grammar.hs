@@ -1,5 +1,6 @@
 {-# OPTIONS -Wall -fno-warn-orphans #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -16,6 +17,7 @@
 
 module Grammar 
     ( Product(..), type (:*:)
+    , Label(..), type L
     , LiteralF(..), type Literal, _Literal
     , type I, pattern I, Const(..)
     , Prism(..), type HPrism
@@ -25,6 +27,7 @@ module Grammar
 
     , Syntax(..)
     , GParser(..)
+    , Tree(..)
     , StringPrinter(..)
     , Annotate(..), Semantics(..)
     , Annotated(..)
@@ -38,6 +41,7 @@ import Control.Category (Category(..))
 import Control.Monad ((<=<))
 import Data.Functor.Const (Const(..))
 import Data.Functor.Identity (Identity(..))
+import Data.Kind (Type)
 import Data.Monoid (First(..))
 import Rank2 (Product(..), Only(..))
 import qualified Rank2
@@ -47,11 +51,14 @@ import qualified ApproximationParser as AP
 -- A bit of "dialect"
 type (:*:) = Product
 
+data Label = Label ((Label -> Type) -> Type)
+type L = 'Label
+
 -- The same as Data.Functor.Const, but matching the naming pattern for
 -- readability.
 newtype LiteralF a f = Literal a
     deriving (Eq, Ord, Read, Show)
-type Literal a = LiteralF a Identity
+type Literal a = L (LiteralF a)
 
 instance Rank2.Functor (LiteralF a) where
     _ <$> Literal a = Literal a
@@ -91,7 +98,7 @@ class Grammar g where
     (≪|≫) :: g h -> g h -> g h
 
 class (Grammar g) => Locus h g where
-    locus :: g h -> g (Only (h Identity))
+    locus :: g h -> g (Only (L h))
 
 literal :: (Locus (LiteralF a) g) => g (Const a) -> g (Only (Literal a))
 literal = locus . (_Literal ≪?≫)
@@ -135,7 +142,11 @@ instance Locus h GParser where
     locus gp = GParser (Only . Const <$> AP.erase (runGParser gp))
 
 
-newtype StringPrinter h = StringPrinter { runStringPrinter :: h Identity -> First String }
+
+data Tree :: Label -> * where
+    Tree :: h Tree -> Tree (L h)
+
+newtype StringPrinter h = StringPrinter { runStringPrinter :: h Tree -> First String }
 
 instance Grammar StringPrinter where
     p ≪?≫ pp = StringPrinter (runStringPrinter pp <=< First . preview p)
@@ -149,12 +160,13 @@ instance Syntax StringPrinter where
     char = StringPrinter (\(Const c) -> pure [c])
 
 instance Locus h StringPrinter where
-    locus pp = StringPrinter (\(Only (Identity h)) -> runStringPrinter pp h)
+    locus pp = StringPrinter (\(Only (Tree h)) -> runStringPrinter pp h)
 
 class Semantics f h where
-    sem :: h f -> f (h Identity)
+    sem :: h f -> f (L h)
 
-newtype Annotate f h = Annotate { runAnnotate :: h Identity -> First (h f) }
+
+newtype Annotate f h = Annotate { runAnnotate :: h Tree -> First (h f) }
 
 instance Grammar (Annotate f) where
     p ≪?≫ ann = Annotate (fmap (review p) . runAnnotate ann <=< First . preview p)
@@ -172,15 +184,14 @@ instance Syntax (Annotate f) where
 -- When we are annotating with f, we can only have loci on shapes that have
 -- a defined semantics for f.
 instance (Semantics f h) => Locus h (Annotate f) where
-    locus (Annotate ann) = Annotate (\(Only (Identity h)) -> Only . sem <$> ann h)
+    locus (Annotate ann) = Annotate (\(Only (Tree h)) -> Only . sem <$> ann h)
 
 
 data Annotated f a where
-    Annotated :: f (h Identity) -> h (Annotated f) -> Annotated f (h Identity)
+    Annotated :: f (L h) -> h (Annotated f) -> Annotated f (L h)
 
 instance (Semantics f h, Rank2.Functor h) => Semantics (Annotated f) h where
     sem hann = Annotated (sem hf) hann
         where
         hf :: h f
         hf = Rank2.fmap (\(Annotated fa _) -> fa) hann
-
