@@ -12,6 +12,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -29,8 +30,7 @@ module Grammar
     , GParser(..)
     , Tree(..)
     , StringPrinter(..)
-    , Annotate(..), Semantics(..)
-    , Annotated(..)
+    , Annotate(..), Semantics(..), SemMorph(..), morphSem
     )
 where
 
@@ -39,10 +39,12 @@ import Control.Applicative (liftA2)
 import qualified Control.Applicative as A
 import Control.Category (Category(..))
 import Control.Monad ((<=<))
+import Data.Constraint ((:-)(..), (\\))
 import Data.Functor.Const (Const(..))
 import Data.Functor.Identity (Identity(..))
 import Data.Kind (Type)
 import Data.Monoid (First(..))
+import Data.Proxy (Proxy(..))
 import Rank2 (Product(..), Only(..))
 import qualified Rank2
 
@@ -162,8 +164,20 @@ instance Syntax StringPrinter where
 instance Locus h StringPrinter where
     locus pp = StringPrinter (\(Only (Tree h)) -> runStringPrinter pp h)
 
-class Semantics f h where
+class (Rank2.Functor h) => Semantics f h where
     sem :: h f -> f (L h)
+
+
+-- This is just a flipped natural transformation f ~> f'.  We should reuse the
+-- NT concept.
+newtype SemMorph f f' = SemMorph (forall h. Semantics f h :- Semantics f' h)
+
+instance Category SemMorph where
+    id = SemMorph id
+    SemMorph g . SemMorph f = SemMorph (g . f)
+
+morphSem :: Proxy h -> Semantics f h => SemMorph f f' -> (Semantics f' h => r) -> r
+morphSem (Proxy :: Proxy h) (SemMorph sub) c = c \\ sub @h
 
 
 newtype Annotate f h = Annotate { runAnnotate :: h Tree -> First (h f) }
@@ -187,11 +201,3 @@ instance (Semantics f h) => Locus h (Annotate f) where
     locus (Annotate ann) = Annotate (\(Only (Tree h)) -> Only . sem <$> ann h)
 
 
-data Annotated f a where
-    Annotated :: f (L h) -> h (Annotated f) -> Annotated f (L h)
-
-instance (Semantics f h, Rank2.Functor h) => Semantics (Annotated f) h where
-    sem hann = Annotated (sem hf) hann
-        where
-        hf :: h f
-        hf = Rank2.fmap (\(Annotated fa _) -> fa) hann
