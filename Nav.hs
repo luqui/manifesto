@@ -17,8 +17,7 @@ import           Grammar
 import qualified Rank2
 
 data Annotated f l where
-    Annotated :: (Semantics f h) 
-              => f (L h) -> h (Annotated f) -> Annotated f (L h)
+    Annotated :: f (L h) -> h (Annotated f) -> Annotated f (L h)
 
 instance (Semantics f h) => Semantics (Annotated f) h where
     sem hann = Annotated (sem hf) hann
@@ -27,15 +26,15 @@ instance (Semantics f h) => Semantics (Annotated f) h where
 
 newtype c := c' = Sub2 (forall x. c x :- c' x)
 
-class NavF f where
+class Navable f where
     isFoldable :: f (L h) -> Dict (Rank2.Foldable h)
     isDifferentiable :: f (L h) -> Dict (D.Differentiable h)
+    isSemantics :: f (L h) -> Dict (Semantics f h)
 
-mapAnnotated :: SemMorph f f' -> (forall x. f x -> f' x) -> Annotated f x -> Annotated f' x
-mapAnnotated m f (Annotated c h) = morphSem (hproxy h) m (Annotated (f c) (Rank2.fmap (mapAnnotated m f) h))
-    where
-    hproxy :: h a -> Proxy h
-    hproxy _ = Proxy
+mapAnnotated :: (Navable f) => (forall x. f x -> f' x) -> Annotated f x -> Annotated f' x
+mapAnnotated f (Annotated c h)
+    | Dict <- isSemantics c -- to get the Rank2.Functor instance
+    = Annotated (f c) (Rank2.fmap (mapAnnotated f) h)
 
 
 data Context f h l where
@@ -49,8 +48,9 @@ up :: Zipper f h -> Maybe (Zipper f h)
 up (Zipper CTop _) = Nothing
 up (Zipper (CCons cx d) t@Annotated{}) = Just (Zipper cx (sem (D.fill d t)))
 
-down :: NavF f => Zipper f h -> [Zipper f h]
+down :: Navable f => Zipper f h -> [Zipper f h]
 down (Zipper cx (Annotated f h)) 
     | Dict <- isFoldable f
     , Dict <- isDifferentiable f
+    , Dict <- isSemantics f
     = Rank2.foldMap (\(D.Loc d x) -> [Zipper (CCons cx d) x]) (D.withLocs h)
