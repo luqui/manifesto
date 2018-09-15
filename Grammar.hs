@@ -40,7 +40,7 @@ import Prelude hiding (id, (.))
 import Control.Applicative (liftA2)
 import qualified Control.Applicative as A
 import Control.Category (Category(..))
-import Control.Monad ((<=<), MonadPlus(..))
+import Control.Monad ((<=<))
 import Data.Functor.Compose (Compose(..))
 import Data.Functor.Const (Const(..))
 import Data.Functor.Identity (Identity(..))
@@ -177,15 +177,12 @@ instance Locus h GParser where
 
 newtype MArrow m f g h = MArrow { getMArrow :: h f -> m (h g) }
 
-toMPlus :: (MonadPlus m) => Maybe a -> m a
-toMPlus = maybe mzero pure
-
-instance (MonadPlus m) => Grammar (MArrow m f g) where
-    p ≪?≫ g = MArrow (fmap (review p) . getMArrow g <=< toMPlus . preview p)
+instance (A.Alternative m) => Grammar (MArrow m f g) where
+    p ≪?≫ g = MArrow (maybe A.empty (fmap (review p) . getMArrow g) . preview p)
     unit = MArrow (\ ~(Const ()) -> pure (Const ()))
     g ≪*≫ g' = MArrow (\(Pair x y) -> liftA2 Pair (getMArrow g x) (getMArrow g' y))
-    empty = MArrow (\_ -> mzero)
-    g ≪|≫ g' = MArrow (\x -> getMArrow g x `mplus` getMArrow g' x)
+    empty = MArrow (\_ -> A.empty)
+    g ≪|≫ g' = MArrow (\x -> getMArrow g x A.<|> getMArrow g' x)
 
 
 -- Pretty prints one level of a tree, given the prettyprintings of its children.
