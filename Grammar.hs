@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PatternSynonyms #-}
@@ -28,9 +29,10 @@ module Grammar
 
     , Syntax(..)
     , GParser(..)
-    , Tree(..)
     , StringPrinter(..)
-    , Annotate(..), Semantics(..), SemMorph(..), morphSem
+    , Annotated(..), pattern Tree
+    , Annotate(..), Semantics(..)
+    , GAnnotate(..), runGAnnotate
     )
 where
 
@@ -39,12 +41,11 @@ import Control.Applicative (liftA2)
 import qualified Control.Applicative as A
 import Control.Category (Category(..))
 import Control.Monad ((<=<))
-import Data.Constraint ((:-)(..), (\\))
+import Data.Functor.Compose (Compose(..))
 import Data.Functor.Const (Const(..))
 import Data.Functor.Identity (Identity(..))
 import Data.Kind (Type)
 import Data.Monoid (First(..))
-import Data.Proxy (Proxy(..))
 import Rank2 (Product(..), Only(..))
 import qualified Rank2
 
@@ -127,6 +128,36 @@ class (Grammar g) => Syntax g where
     char :: g (Const Char)
 
 
+-- Grammar/Syntax/Locus are F-algebras, so as usual they distribute over products.
+instance Grammar (Const ()) where
+    _ ≪?≫ _ = Const ()
+    unit = Const ()
+    _ ≪*≫ _ = Const ()
+    empty = Const ()
+    _ ≪|≫ _ = Const ()
+
+instance Locus h (Const ()) where
+    locus _ = Const ()
+
+instance Syntax (Const ()) where
+    symbol _ = Const ()
+    char = Const ()
+
+instance (Grammar g, Grammar g') => Grammar (g :*: g') where
+    p ≪?≫ ~(Pair g h) = Pair (p ≪?≫ g) (p ≪?≫ h)
+    unit = Pair unit unit
+    ~(Pair a a') ≪*≫ ~(Pair b b') = Pair (a ≪*≫ b) (a' ≪*≫ b')
+    empty = Pair empty empty
+    ~(Pair a a') ≪|≫ ~(Pair b b') = Pair (a ≪|≫ b) (a' ≪|≫ b')
+
+instance (Locus h g, Locus h g') => Locus h (g :*: g') where
+    locus ~(Pair g g') = Pair (locus g) (locus g')
+
+instance (Syntax g, Syntax g') => Syntax (g :*: g') where
+    symbol s = Pair (symbol s) (symbol s)
+    char = Pair char char
+
+
 newtype GParser h = GParser { runGParser :: AP.Parser (h (Const ())) }
 
 instance Grammar GParser where
@@ -144,11 +175,8 @@ instance Locus h GParser where
     locus gp = GParser (Only . Const <$> AP.erase (runGParser gp))
 
 
-
-data Tree :: Label -> * where
-    Tree :: h Tree -> Tree (L h)
-
-newtype StringPrinter h = StringPrinter { runStringPrinter :: h Tree -> First String }
+-- Pretty prints one level of a tree, given the prettyprintings of its children.
+newtype StringPrinter h = StringPrinter { runStringPrinter :: h (Const String) -> First String }
 
 instance Grammar StringPrinter where
     p ≪?≫ pp = StringPrinter (runStringPrinter pp <=< First . preview p)
@@ -162,25 +190,37 @@ instance Syntax StringPrinter where
     char = StringPrinter (\(Const c) -> pure [c])
 
 instance Locus h StringPrinter where
-    locus pp = StringPrinter (\(Only (Tree h)) -> runStringPrinter pp h)
+    locus _ = StringPrinter (\(Only (Const s)) -> pure s)
+
+
 
 class (Rank2.Functor h) => Semantics f h where
     sem :: h f -> f (L h)
 
+instance (Rank2.Functor h) => Semantics (Const ()) h where
+    sem _ = Const ()
 
--- This is just a flipped natural transformation f ~> f'.  We should reuse the
--- NT concept.
-newtype SemMorph f f' = SemMorph (forall h. Semantics f h :- Semantics f' h)
-
-instance Category SemMorph where
-    id = SemMorph id
-    SemMorph g . SemMorph f = SemMorph (g . f)
-
-morphSem :: Proxy h -> Semantics f h => SemMorph f f' -> (Semantics f' h => r) -> r
-morphSem (Proxy :: Proxy h) (SemMorph sub) c = c \\ sub @h
+instance (Rank2.Functor h, Semantics f h, Semantics g h) => Semantics (f :*: g) h where
+    sem h = Pair (sem (Rank2.fst Rank2.<$> h)) (sem (Rank2.snd Rank2.<$> h))
 
 
-newtype Annotate f h = Annotate { runAnnotate :: h Tree -> First (h f) }
+type OfLabel f = Compose f L
+
+data Annotated f l where
+    Annotated :: f h -> h (Annotated f) -> Annotated f (L h)
+
+instance (Semantics f h) => Semantics (Annotated (OfLabel f)) h where
+    sem hann = Annotated (Compose (sem hf)) hann
+        where
+        hf = Rank2.fmap (\(Annotated (Compose fa) _) -> fa) hann
+
+type Tree = Annotated (Const ())
+
+pattern Tree :: h Tree -> Tree (L h)
+pattern Tree t = Annotated (Const ()) t
+
+newtype Annotate f h = Annotate { 
+    runAnnotate :: h Tree -> First (h (Annotated f)) }
 
 instance Grammar (Annotate f) where
     p ≪?≫ ann = Annotate (fmap (review p) . runAnnotate ann <=< First . preview p)
@@ -197,7 +237,18 @@ instance Syntax (Annotate f) where
 
 -- When we are annotating with f, we can only have loci on shapes that have
 -- a defined semantics for f.
-instance (Semantics f h) => Locus h (Annotate f) where
-    locus (Annotate ann) = Annotate (\(Only (Tree h)) -> Only . sem <$> ann h)
+instance (Semantics f h) => Locus h (Annotate (OfLabel f)) where
+    locus (Annotate ann) = Annotate (\(Only (Tree h)) -> 
+        Only . sem <$> ann h)
 
+
+newtype GAnnotate g h = GAnnotate ((g :*: Annotate g) h)
+    deriving (Grammar, Syntax)
+
+instance (Locus h g) => Locus h (GAnnotate g) where
+    locus (GAnnotate ~(Pair g (Annotate ann))) = GAnnotate . Pair (locus g) . Annotate $
+        \(Only (Tree h)) -> Only . Annotated g <$> ann h
+
+runGAnnotate :: GAnnotate g h -> h Tree -> First (h (Annotated g))
+runGAnnotate (GAnnotate (Pair _ (Annotate ann))) t = ann t
 

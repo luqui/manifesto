@@ -18,17 +18,16 @@ import           Data.Proxy (Proxy(..))
 import           Grammar
 import qualified Rank2
 
-data Annotated f l where
-    Annotated :: f (L h) -> h (Annotated f) -> Annotated f (L h)
-
-instance (Semantics f h) => Semantics (Annotated f) h where
-    sem hann = Annotated (sem hf) hann
-        where
-        hf = Rank2.fmap (\(Annotated fa _) -> fa) hann
-
-newtype c := c' = Sub2 (forall x. c x :- c' x)
-
+-- Assumptions required for navigating.
 type NavAssumptions f h = (Rank2.Foldable h, D.Differentiable h, Semantics f h)
+
+-- Fortunately they can be derived from the grammar.
+data NavAssumptionsSem f l where
+    NavAssumptionsSem :: NavAssumptions f h => NavAssumptionsSem f (L h)
+
+instance (NavAssumptions f h) => Semantics (NavAssumptionsSem f) h where
+    sem _ = NavAssumptionsSem
+
 
 class Navable f where
     navAssumptions :: f (L h) -> Dict (NavAssumptions f h)

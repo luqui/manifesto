@@ -11,10 +11,11 @@
 
 module Main where
 
-import Grammar
-import qualified Rank2
 import qualified ApproximationParser as AP
-import Data.Monoid (First(..))
+import           Data.Monoid (First(..))
+import           Grammar
+import qualified Nav
+import qualified Rank2
 
 -- The abstract syntax.  Note the pattern of recusion: f on top, I the
 -- rest of the way down.
@@ -74,8 +75,22 @@ instance Semantics EvalSem Expr where
     sem (Cat (EStr x) (EStr y)) = EStr (x ++ y)
     sem (Lit (EChar x)) = EStr [x]
 
--- Example expression.
 
+-- Navigation semantics
+data NavSem l where
+    NavSem :: (NavAssumptions (NavSem (L h)) h)
+           => StringPrinter h
+           -> NavSem (L h)
+
+instance Semantics NavSem (LiteralF Char) where
+    sem :: LiteralF Char NavSem -> NavSem (L (LiteralF Char))
+    sem (Literal c) = NavSem 
+
+    locus :: StringPrinter h -> StringPrinter (Only (L h))
+
+
+
+{-
 exampleExpr :: Tree (L Expr)
 exampleExpr = t (Cat (t (Cat (t (Lit (t (Literal 'a')))) (t (Lit (t (Literal 'b')))))) (t (Lit (t (Literal 'c')))))
     where
@@ -97,3 +112,4 @@ main = do
 
     -- Parser
     print . AP.approximate . AP.applyPrefix (runGParser expr1) $ "cat("
+-}
