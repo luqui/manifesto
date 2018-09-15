@@ -40,7 +40,7 @@ import Prelude hiding (id, (.))
 import Control.Applicative (liftA2)
 import qualified Control.Applicative as A
 import Control.Category (Category(..))
-import Control.Monad ((<=<))
+import Control.Monad ((<=<), MonadPlus(..))
 import Data.Functor.Compose (Compose(..))
 import Data.Functor.Const (Const(..))
 import Data.Functor.Identity (Identity(..))
@@ -175,6 +175,19 @@ instance Locus h GParser where
     locus gp = GParser (Only . Const <$> AP.erase (runGParser gp))
 
 
+newtype MArrow m f g h = MArrow { getMArrow :: h f -> m (h g) }
+
+toMPlus :: (MonadPlus m) => Maybe a -> m a
+toMPlus = maybe mzero pure
+
+instance (MonadPlus m) => Grammar (MArrow m f g) where
+    p ≪?≫ g = MArrow (fmap (review p) . getMArrow g <=< toMPlus . preview p)
+    unit = MArrow (\ ~(Const ()) -> pure (Const ()))
+    g ≪*≫ g' = MArrow (\(Pair x y) -> liftA2 Pair (getMArrow g x) (getMArrow g' y))
+    empty = MArrow (\_ -> mzero)
+    g ≪|≫ g' = MArrow (\x -> getMArrow g x `mplus` getMArrow g' x)
+
+
 -- Pretty prints one level of a tree, given the prettyprintings of its children.
 newtype StringPrinter h = StringPrinter { runStringPrinter :: h (Const String) -> First String }
 
@@ -202,6 +215,7 @@ instance (Rank2.Functor h) => Semantics (Const ()) h where
 
 instance (Rank2.Functor h, Semantics f h, Semantics g h) => Semantics (f :*: g) h where
     sem h = Pair (sem (Rank2.fst Rank2.<$> h)) (sem (Rank2.snd Rank2.<$> h))
+
 
 
 type OfLabel f = Compose f L
