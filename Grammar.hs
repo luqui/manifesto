@@ -184,6 +184,10 @@ instance (A.Alternative m) => Grammar (MArrow m f g) where
     empty = MArrow (\_ -> A.empty)
     g ≪|≫ g' = MArrow (\x -> getMArrow g x A.<|> getMArrow g' x)
 
+-- To implement Locus MArrow we need:
+-- locus' :: (h f -> h g) -> f (L h) -> g (L h)
+-- locus'' :: (h g -> g (L h)) * (f (L h) -> h f)
+--         :: Semantics g h    * Cosemantics f h
 
 -- Pretty prints one level of a tree, given the prettyprintings of its children.
 newtype StringPrinter h = StringPrinter { runStringPrinter :: h (Const String) -> First String }
