@@ -54,6 +54,7 @@ import qualified Rank2
 import qualified ApproximationParser as AP
 
 -- A bit of "dialect"
+infixr 7 :*:
 type (:*:) = Product
 
 data Label = Label ((Label -> Type) -> Type)
