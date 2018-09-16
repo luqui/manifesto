@@ -19,24 +19,28 @@ import           Grammar
 import qualified Rank2
 
 -- Assumptions required for navigating.
-type NavAssumptions f h = (Rank2.Foldable h, D.Differentiable h, Semantics f h)
+type NavAssumptions f h = (Rank2.Foldable h, D.Differentiable h, Locus h f)
 
 -- Fortunately they can be derived from the grammar.
-data NavAssumptionsSem f l where
-    NavAssumptionsSem :: NavAssumptions f h => NavAssumptionsSem f (L h)
+data NavAssumptionsSem f h where
+    NavAssumptionsSem :: NavAssumptions f h => NavAssumptionsSem f h
 
-instance (NavAssumptions f h) => Semantics (NavAssumptionsSem f) h where
-    sem _ = NavAssumptionsSem
+instance Grammar (NavAssumptionsSem f) where
+    _ ≪?≫ NavAssumptionsSem = NavAssumptionsSem
+
+instance (NavAssumptions f g) => Locus g (NavAssumptionsSem f) where
+    locus _ = NavAssumptionsSem
 
 
 class Navable f where
-    navAssumptions :: f (L h) -> Dict (NavAssumptions f h)
+    navAssumptions :: f h -> Dict (NavAssumptions f h)
 
 mapAnnotated :: (Navable f) => (forall x. f x -> f' x) -> Annotated f x -> Annotated f' x
 mapAnnotated f (Annotated c h)
     | Dict <- navAssumptions c
     = Annotated (f c) (Rank2.fmap (mapAnnotated f) h)
 
+{-
 data DAnnotated f h l = DAnnotated (f (L h)) (D.D h l (Annotated f))
                                  -- ^ Should be a D f, once we have rank 1 derivatives. 
 
@@ -74,3 +78,4 @@ siblings (Zipper (CCons cx d@(DAnnotated f d')) t)
             Const (Zipper (CCons cx dann) t')
         )
         (D.withLocs d')
+-}

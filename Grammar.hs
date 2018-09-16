@@ -11,6 +11,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -31,7 +32,7 @@ module Grammar
     , GParser(..)
     , StringPrinter(..)
     , Annotated(..), pattern Tree
-    , Annotate(..), Semantics(..)
+    , Annotate(..), Semantics(..), type OfLabel
     , GAnnotate(..), runGAnnotate
     )
 where
@@ -41,6 +42,7 @@ import Control.Applicative (liftA2)
 import qualified Control.Applicative as A
 import Control.Category (Category(..))
 import Control.Monad ((<=<))
+import Control.Monad.Fix (MonadFix(..))
 import Data.Functor.Compose (Compose(..))
 import Data.Functor.Const (Const(..))
 import Data.Functor.Identity (Identity(..))
@@ -188,6 +190,27 @@ instance (A.Alternative m) => Grammar (MArrow m f g) where
 -- locus' :: (h f -> h g) -> f (L h) -> g (L h)
 -- locus'' :: (h g -> g (L h)) * (f (L h) -> h f)
 --         :: Semantics g h    * Cosemantics f h
+-- locus' t f = let hf = snd locus'' f
+--                  g  = fst locus'' (t hf)
+--              in g
+-- locus''' :: f (L h) -> h g -> (h f, g (L h))
+-- locus' t f = let (hf,g) = locus''' f (t hf) in g
+
+class GSemantics f g h where
+    gsem :: f (L h) -> h g -> (h f, g (L h))
+
+-- Technically we only need ApplicativeFix, but that's not a thing.
+-- See http://ilyasergey.net/slides/pepm13-slides.pdf  .
+instance (A.Alternative m, MonadFix m, GSemantics f g h) => Locus h (MArrow m f g) where
+    locus (MArrow t) = MArrow (\(Only f) -> do
+        rec hg <- t hf
+            let (hf, g) = gsem f hg
+        return (Only g))
+
+instance (A.Alternative m) => Syntax (MArrow m f g) where
+    char = MArrow (\(Const c) -> pure (Const c))
+    symbol _ = MArrow (\_ -> pure (Const ()))
+
 
 -- Pretty prints one level of a tree, given the prettyprintings of its children.
 newtype StringPrinter h = StringPrinter { runStringPrinter :: h (Const String) -> First String }
