@@ -15,6 +15,7 @@
 module Main where
 
 import           Data.Functor.Compose
+import qualified Data.Map as Map
 import qualified Rank2
 
 import           Grammar
@@ -85,6 +86,7 @@ varname = choice [ _constant n ≪?≫ symbol n | n <- ["x","y","z"] ]
 data Expr f
     = Lit (f (Literal Integer))
     | Let (f (Literal String)) (f (L Expr)) (f (L Expr))
+    | Var (f (Literal String))
     | Add (f (L Expr)) (f (L Expr))
 
 -- These should be automatically generated.
@@ -118,6 +120,43 @@ expr = choice
         [ locus (_Lit ≪?≫ literal number)
         , symbol "(" *≫ expr ≪* symbol ")"
         ] 
+
+
+data family Env (l :: Label) :: *
+data instance Env (Literal String) = EnvString
+data instance Env (Literal Integer) = EnvInteger
+data instance Env (L Expr) = EnvExpr (Map.Map String Integer)
+
+data family Value (l :: Label) :: *
+data instance Value (Literal String) = ValueString String
+data instance Value (Literal Integer) = ValueInteger Integer
+data instance Value (L Expr) = ValueExpr Integer
+
+deriving instance Show (Value (L Expr))
+
+instance GSemantics Env Value (LiteralF String) where
+    gsem EnvString (Literal s) = (Literal s, ValueString s)
+
+instance GSemantics Env Value (LiteralF Integer) where
+    gsem EnvInteger (Literal z) = (Literal z, ValueInteger z)
+
+instance GSemantics Env Value Expr where
+    gsem _ (Lit ~(ValueInteger z)) = (Lit EnvInteger, ValueExpr z)
+    -- Probably need lazy patterns
+    gsem ~(EnvExpr env) (Let ~(ValueString s) ~(ValueExpr v) ~(ValueExpr e))
+        = ( Let EnvString (EnvExpr env) (EnvExpr (Map.insert s e env))
+          , ValueExpr v )
+    gsem ~(EnvExpr env) (Var ~(ValueString s)) 
+        = ( Var EnvString
+          , ValueExpr (env Map.! s))
+    gsem ~(EnvExpr env) (Add ~(ValueExpr a) (ValueExpr b))
+        = ( Add (EnvExpr env) (EnvExpr env)
+          , ValueExpr (a + b) )
+
+main :: IO ()
+main = do
+    print . fmap fromOnly $ getMArrow (expr :: MArrow Maybe Env Value (Only (L Expr))) (Only (EnvExpr Map.empty))
+
 {-
 -- Evaluation semantics. (It's a shame that we need to coerce for promoteConst,
 -- that's what's causing all this Representational junk.  If not, EvalSem could
@@ -178,5 +217,3 @@ main = do
     print . AP.approximate . AP.applyPrefix (runGParser expr1) $ "cat("
 -}
 -}
-
-main = return ()

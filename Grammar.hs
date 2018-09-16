@@ -33,6 +33,7 @@ module Grammar
     , StringPrinter(..)
     , Annotated(..), pattern Tree
     , Annotate(..), Semantics(..), type OfLabel
+    , MArrow(..), GSemantics(..)
     , GAnnotate(..), runGAnnotate
     )
 where
