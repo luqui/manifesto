@@ -135,27 +135,27 @@ data instance Value (L Expr) = ValueExpr Integer
 deriving instance Show (Value (L Expr))
 
 instance GSemantics Env Value (LiteralF String) where
-    gsem EnvString (Literal s) = (Literal s, ValueString s)
+    synsem _ (Literal s) = ValueString s
+    inhsem _ (Literal z) = Literal z
 
 instance GSemantics Env Value (LiteralF Integer) where
-    gsem EnvInteger (Literal z) = (Literal z, ValueInteger z)
+    synsem _ (Literal z) = ValueInteger z
+    inhsem _ (Literal z) = Literal z
 
 instance GSemantics Env Value Expr where
-    gsem _ (Lit ~(ValueInteger z)) = (Lit EnvInteger, ValueExpr z)
-    -- Probably need lazy patterns
-    gsem ~(EnvExpr env) (Let ~(ValueString s) ~(ValueExpr v) ~(ValueExpr e))
-        = ( Let EnvString (EnvExpr env) (EnvExpr (Map.insert s e env))
-          , ValueExpr v )
-    gsem ~(EnvExpr env) (Var ~(ValueString s)) 
-        = ( Var EnvString
-          , ValueExpr (env Map.! s))
-    gsem ~(EnvExpr env) (Add ~(ValueExpr a) (ValueExpr b))
-        = ( Add (EnvExpr env) (EnvExpr env)
-          , ValueExpr (a + b) )
+    synsem _ (Lit (ValueInteger z)) = ValueExpr z
+    synsem _ (Let _ _ (ValueExpr z)) = ValueExpr z
+    synsem (EnvExpr env) (Var (ValueString s)) = ValueExpr (env Map.! s)
+    synsem _ (Add (ValueExpr a) (ValueExpr b)) = ValueExpr (a + b)
+
+    inhsem _ (Lit _) = Lit EnvInteger
+    inhsem (EnvExpr env) (Let (ValueString s) (ValueExpr v) _) =
+        Let EnvString (EnvExpr env) (EnvExpr (Map.insert s v env))
+    inhsem _ (Var _) = Var EnvString
+    inhsem env (Add _ _) = Add env env
 
 main :: IO ()
-main = do
-    print . fmap fromOnly $ getMArrow (expr :: MArrow Maybe Env Value (Only (L Expr))) (Only (EnvExpr Map.empty))
+main = undefined
 
 {-
 -- Evaluation semantics. (It's a shame that we need to coerce for promoteConst,

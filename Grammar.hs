@@ -33,7 +33,7 @@ module Grammar
     , StringPrinter(..)
     , Annotated(..), pattern Tree
     , Annotate(..), Semantics(..), type OfLabel
-    , MArrow(..), GSemantics(..)
+    , GSemantics(..)
     , GAnnotate(..), runGAnnotate
     )
 where
@@ -43,10 +43,10 @@ import Control.Applicative (liftA2)
 import qualified Control.Applicative as A
 import Control.Category (Category(..))
 import Control.Monad ((<=<))
-import Control.Monad.Fix (MonadFix(..))
 import Data.Functor.Compose (Compose(..))
 import Data.Functor.Const (Const(..))
 import Data.Functor.Identity (Identity(..))
+import Data.Functor.Differentiable.Rank2 () -- for Rank2.Functor Const instance.
 import Data.Kind (Type)
 import Data.Monoid (First(..))
 import Rank2 (Product(..), Only(..))
@@ -76,10 +76,6 @@ _Literal = Prism (\(Const x) -> Literal x) (\(Literal x) -> Just (Const x))
 type I = Identity
 pattern I :: a -> I a
 pattern I x = Identity x
-
--- TODO: PR this into Rank2
-instance Rank2.Functor (Const a) where
-    _ <$> Const x = Const x
 
 -- N.B. The arguments are reversed from the prism in lens.
 data Prism a b = Prism { 
@@ -179,39 +175,20 @@ instance Locus h GParser where
     locus gp = GParser (Only . Const <$> AP.erase (runGParser gp))
 
 
-newtype MArrow m f g h = MArrow { getMArrow :: h f -> m (h g) }
-
-instance (A.Alternative m) => Grammar (MArrow m f g) where
-    p ≪?≫ g = MArrow (maybe A.empty (fmap (review p) . getMArrow g) . preview p)
-    unit = MArrow (\ ~(Const ()) -> pure (Const ()))
-    g ≪*≫ g' = MArrow (\(Pair x y) -> liftA2 Pair (getMArrow g x) (getMArrow g' y))
-    empty = MArrow (\_ -> A.empty)
-    g ≪|≫ g' = MArrow (\x -> getMArrow g x A.<|> getMArrow g' x)
-
--- To implement Locus MArrow we need:
--- locus' :: (h f -> h g) -> f (L h) -> g (L h)
--- locus'' :: (h g -> g (L h)) * (f (L h) -> h f)
---         :: Semantics g h    * Cosemantics f h
--- locus' t f = let hf = snd locus'' f
---                  g  = fst locus'' (t hf)
---              in g
--- locus''' :: f (L h) -> h g -> (h f, g (L h))
--- locus' t f = let (hf,g) = locus''' f (t hf) in g
-
-class GSemantics f g h where
+class (Rank2.Functor h) => GSemantics f g h where
     gsem :: f (L h) -> h g -> (h f, g (L h))
+    gsem inh hsyn = (inhsem inh hsyn, synsem inh hsyn)
 
--- Technically we only need ApplicativeFix, but that's not a thing.
--- See http://ilyasergey.net/slides/pepm13-slides.pdf  .
-instance (A.Alternative m, MonadFix m, GSemantics f g h) => Locus h (MArrow m f g) where
-    locus (MArrow t) = MArrow (\(Only f) -> do
-        rec hg <- t hf
-            let (hf, g) = gsem f hg
-        return (Only g))
+    synsem :: f (L h) -> h g -> g (L h)
+    inhsem :: f (L h) -> h g -> h f
+    -- Alternatively, the "view from below"
+    -- inhsem' :: f (L h) -> D h b g -> f b
 
-instance (A.Alternative m) => Syntax (MArrow m f g) where
-    char = MArrow (\(Const c) -> pure (Const c))
-    symbol _ = MArrow (\_ -> pure (Const ()))
+data Neighborhood f g l where
+    Neighborhood :: GSemantics f g h => Neighborhood f g (L h)
+
+instance GSemantics f g h => Semantics (Neighborhood f g) h where
+    sem _ = Neighborhood
 
 
 -- Pretty prints one level of a tree, given the prettyprintings of its children.
@@ -232,9 +209,8 @@ instance Locus h StringPrinter where
     locus _ = StringPrinter (\(Only (Const s)) -> pure s)
 
 
-
-class (Rank2.Functor h) => Semantics f h where
-    sem :: h f -> f (L h)
+class (Rank2.Functor h) => Semantics g h where
+    sem :: h g -> g (L h)
 
 instance (Rank2.Functor h) => Semantics (Const ()) h where
     sem _ = Const ()
