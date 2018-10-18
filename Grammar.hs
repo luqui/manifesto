@@ -30,6 +30,7 @@ module Grammar
 
     , Syntax(..)
     , GParser(..)
+    , Closure, closureExtract, closureDown, OnLabel(..)
     , StringPrinter(..)
     , Annotated(..), pattern Tree
     , Annotate(..), Semantics(..), type OfLabel
@@ -189,6 +190,22 @@ class Tagging t h where
 instance (Tagging t h, Rank2.Functor h) => Locus h (Tagger t) where
     locus _ = Tagger (\o -> pure (Only (Pair (fromOnly o) tag)))
 
+
+data OnLabel g l where
+    OnLabel :: g h -> OnLabel g (L h)
+
+newtype Closure g h = Closure ((g :*: Tagger (OnLabel (Closure g))) h)
+    deriving (Grammar)
+
+instance (Locus h g) => Locus h (Closure g) where
+    locus clo@(Closure (Pair g _)) = Closure (Pair (locus g) (Tagger (\(Only o) -> 
+        (pure (Only (Pair o (OnLabel clo)))))))
+
+closureExtract :: Closure g h -> g h
+closureExtract (Closure (Pair g _)) = g
+
+closureDown :: Closure g h -> h f -> First (h (f :*: OnLabel (Closure g)))
+closureDown (Closure (Pair _ t)) = runTagger t
 
 newtype CaseEnumerator h = CaseEnumerator { runCaseEnumerator :: [h (Const ())] }
 
