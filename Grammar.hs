@@ -183,6 +183,13 @@ instance Grammar (Tagger t) where
     empty = Tagger (\_ -> mempty)
     g ≪|≫ g' = Tagger (\hf -> runTagger g hf <> runTagger g' hf)
 
+class Tagging t h where
+    tag :: t (L h)
+
+instance (Tagging t h) => Locus h (Tagger t) where
+    locus _ = Tagger (\o -> pure (Only (Pair (fromOnly o) tag)))
+
+
 newtype CaseEnumerator h = CaseEnumerator { runCaseEnumerator :: [h (Const ())] }
 
 instance Grammar CaseEnumerator where
