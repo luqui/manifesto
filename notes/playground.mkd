@@ -1,0 +1,153 @@
+I find myself in a somewhat serendipitous situation where making radicle's repl
+fancy is the best use of my time for oscoin.  This is manifesto's jams, though
+it also offers some reframing on what manifesto's goal is.  Here it seems less
+about editing *syntax* (e.g. parsing) and more about editing *data structures*.
+
+In particular I am thinking about a playground, a la my blog post "playground
+programming".  The playground is the data structure, which is a set of
+definitions and a series of actions, each of which can be edited and re-ordered.
+The structural editor part of the syntax is less important, the structural
+editor part of the playground is quite important.
+
+What I would like: a data structure for the playground:
+
+    data Context = Context {
+        defns :: [Defn],
+        actions :: [Expr]
+    }
+    data Playground = Playground Context String
+
+(or perhaps
+
+    data Playground = Playground Context (Partial Expr)
+
+where `Partial a` is a type that allows a partially-completed `a` to persist)
+
+And then define an editor for it:
+
+    context = _Context ≪?≫ vertical (list defn) ≪^≫ vertical (list expr)
+    playground = _Playground ≪?≫ context ≪^≫ partial parseExpr text
+
+Not worrying so much about parsing--just letting the combinators define our
+navigations, relying on `text` for "deep" edits.
+
+As for what I'm focusing on now--annotating the tree--maybe that is too
+ambitious.  I am having such a hard time with it.  Is it relevant for the
+playground?
+
+A little bit.  Playgrounds should have views, e.g.
+
+    (def sum (fn [x y] (+ x y)))
+    (sum 2 3)                    --> 5
+    >>> _
+
+such that if we change the definition of sum, the view will adapt.  We should be
+able to say:
+
+    view = withPreview expr (\e -> pretty (eval expr))
+
+or something like that.  Since the preview is not editable I think this "monady"
+type combinator will work ok.  (I would like to be able to focus the preview so
+that I can e.g. copy it to clipboard.)
+
+How simple can we make this?  It seems similar to pretty printer combinators,
+but it also includes destructuring.  The best bet I have right now is
+
+    Editor a = Loc a -> (Doc, Input (Loc a))
+
+where
+
+    Loc a = exists b. (D b a, b)
+
+which is still quite handwavey.  (Feels like I'm going in circles)  I would love
+to adequately represent a `Loc` without having to have the explicit
+representation of the derivative.  I've done some things with existential
+internal state before which worked ok, though it got pretty messy, and I think
+an essential problem came up with the approach, but I don't remember what it
+was.
+
+Shifting gears, what combinators do I have?
+
+    text :: Editor String
+    hlist :: Editor a -> Editor [a]
+    vlist :: Editor a -> Editor [a]
+    preview :: Editor a -> (a -> Doc) -> Editor a   -- what if we want the
+                                                    -- preview somewhere else
+                                                    -- in the view?
+
+This `preview` question gives me a whole different direction for the design.
+What if we had a layout monad?
+
+    playground = do
+        defns <- vlist defn
+        views <- vlist view
+        return $ defns <^> [ hcat [ e, " --> ", v ] | (e,v) <- views ]
+
+We return the final layout as a pure `Doc`.  But the connections between widgets
+are specified earlier.  This is an approach I haven't explored, at least.
+
+I guess we need a way to pull apart the input:
+
+    playground p = do
+        defns <- vlist defn (pDefns p)
+        views <- vlist view (pViews p)
+        return ...
+
+So
+
+    vlist :: Editor a -> [a] -> Layout Doc
+
+We need some way to connect the navigators of the two `vlist`s.  Maybe:
+
+    playground p = do
+        [defns, views] <- vertical
+            [ vlist defn (pDefns p)
+            , vlist view (pViews p)
+            ]
+        return $ defns <^> [ hcat [ e, " --> ", v ] | (e,v) <- views ]
+
+So
+
+    vertical :: [Layout a] -> Layout [a]
+
+Now there is duplication in `vertical` and `<^>`, which are representing almost
+the same thing.
+
+Maybe we use the monad to uniquely identify the different focusable thingies,
+and then return the result value, layout, and navigation graph (which includes
+edits).
+
+    Editor a = a -> Labels l (Doc, NavGraph l, a)
+
+Hm, it's not quite right.  We want to label the "parts" of `a`, and represent a
+graph of navigations and edits between them, which can give rise to a new `a`
+(and thus a new labeling).  Maybe we never destructure the `a` except at the
+beginning, and after that we only operate on `NavGraph`.  Each node in the graph
+must contain instructions for reconstituting the original value.
+
+So perhaps an application node might look like this:
+
+    ((Exp,Exp) -> Exp, (l,l))
+
+Thus a shape-functor general node is perhaps:
+
+    (h f -> f (L h), h (Const l))
+
+I maybe like this graph centric approach.  Each focusable thing is identified by
+a label, each node specifies how labels relate.  Focusing on something is as
+easy as specifying which label we are focused on (no zippers!).  Also multiple
+cursors is easy!
+
+Each node needs:
+
+    * Collection of references: h (Const l)
+    * Value reconstitution function: h f -> f (L h)
+    * Navigatrix: Input -> Maybe l   (mind: we need 'parent' also)
+    * Local edits: h (Const l) -> Input Node
+
+Parent is tricky.  When we mutate we need to make sure the parent reference is
+accurate.  Maybe we can do it without parent, instead using the stack of labels
+we traversed to get there.  This could be accurate if the graph is always a
+tree (if not "parent" is kind of meaningless anyway?)
+
+
