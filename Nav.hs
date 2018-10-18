@@ -18,6 +18,9 @@ import           Data.Proxy (Proxy(..))
 import           Grammar
 import qualified Rank2
 
+
+
+
 -- Assumptions required for navigating.
 type NavAssumptions f h = (Rank2.Foldable h, D.Differentiable h, Locus h f)
 

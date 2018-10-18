@@ -174,10 +174,53 @@ instance Syntax GParser where
 instance Locus h GParser where
     locus gp = GParser (Only . Const <$> AP.erase (runGParser gp))
 
+newtype Tagger t h = Tagger { runTagger :: forall f. h f -> First (h (f :*: t)) }
+
+instance Grammar (Tagger t) where
+    p ≪?≫ g = Tagger (fmap (review p) . runTagger g <=< First . preview p)
+    unit = Tagger (\(Const ()) -> pure (Const ()))
+    g ≪*≫ g' = Tagger (\(Pair a b) -> Pair <$> runTagger g a <*> runTagger g' b)
+    empty = Tagger (\_ -> mempty)
+    g ≪|≫ g' = Tagger (\hf -> runTagger g hf <> runTagger g' hf)
+
+newtype CaseEnumerator h = CaseEnumerator { runCaseEnumerator :: [h (Const ())] }
+
+instance Grammar CaseEnumerator where
+    p ≪?≫ g = CaseEnumerator (fmap (review p) (runCaseEnumerator g))
+    unit = CaseEnumerator [Const ()]
+    g ≪*≫ g' = CaseEnumerator (Pair <$> runCaseEnumerator g <*> runCaseEnumerator g')
+    empty = CaseEnumerator []
+    g ≪|≫ g' = CaseEnumerator (runCaseEnumerator g ++ runCaseEnumerator g')
+
+instance Locus h CaseEnumerator where
+    locus _ = CaseEnumerator [Only (Const ())]
+
+-- Parsing strategy: reverse pretty printing.  Use CaseEnumerator to enumerate.
+--
+--   parse (Lambda v x) = "\\" <> v <> ". " <> x
+--   ...
+--
+-- These tokens can be a bit more flexible than strings, but this is the basic idea.
+-- Constructor only on the left.  Then parser can be defined "semantics-style".
+-- And maybe we can even derive the Grammar spec automatically.
+
+
+{-
+newtype GSemGrammar f g h = GSemGrammar { getGSemGrammar :: h (GSem f g) }
+
+instance Grammar (GSemGrammar f g) where
+    p ≪?≫ GSemGrammar g = GSemGrammar (review p g)
+    unit = GSemGrammar (Const ())
+    GSemGrammar g ≪*≫ GSemGrammar g' = GSemGrammar (Pair g g')
+    empty = GSemGrammar 
+-}
+
+data GSem f g l where
+    GSem :: (f (L h) -> h g -> (h f, g (L h))) -> GSem f g (L h)
 
 class (Rank2.Functor h) => GSemantics f g h where
-    gsem :: f (L h) -> h g -> (h f, g (L h))
-    gsem inh hsyn = (inhsem inh hsyn, synsem inh hsyn)
+    gsem :: GSem f g (L h)
+    gsem = GSem $ \inh hsyn -> (inhsem inh hsyn, synsem inh hsyn)
 
     synsem :: f (L h) -> h g -> g (L h)
     inhsem :: f (L h) -> h g -> h f
