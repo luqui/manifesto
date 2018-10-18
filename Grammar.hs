@@ -30,7 +30,8 @@ module Grammar
 
     , Syntax(..)
     , GParser(..)
-    , Closure, closureExtract, closureDown, OnLabel(..)
+    , Closed(..)
+    , Closure, closureExtract, OnLabel(..)
     , StringPrinter(..)
     , Annotated(..), pattern Tree
     , Annotate(..), Semantics(..), type OfLabel
@@ -194,6 +195,11 @@ instance (Tagging t h, Rank2.Functor h) => Locus h (Tagger t) where
 data OnLabel g l where
     OnLabel :: g h -> OnLabel g (L h)
 
+class Closed g where
+    -- We can return failure because grammars are allowed to be partial
+    -- (so that they can compose with ≪|≫)
+    closed :: g h -> h f -> First (h (f :*: OnLabel g))
+
 newtype Closure g h = Closure ((g :*: Tagger (OnLabel (Closure g))) h)
     deriving (Grammar)
 
@@ -204,8 +210,10 @@ instance (Locus h g) => Locus h (Closure g) where
 closureExtract :: Closure g h -> g h
 closureExtract (Closure (Pair g _)) = g
 
-closureDown :: Closure g h -> h f -> First (h (f :*: OnLabel (Closure g)))
-closureDown (Closure (Pair _ t)) = runTagger t
+instance Closed (Closure g) where
+    closed (Closure (Pair _ t)) = runTagger t
+
+
 
 newtype CaseEnumerator h = CaseEnumerator { runCaseEnumerator :: [h (Const ())] }
 
