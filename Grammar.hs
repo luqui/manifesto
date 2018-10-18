@@ -100,7 +100,7 @@ class Grammar g where
     empty :: g h
     (≪|≫) :: g h -> g h -> g h
 
-class (Grammar g) => Locus h g where
+class (Grammar g, Rank2.Functor h) => Locus h g where
     locus :: g h -> g (Only (L h))
 
 literal :: (Locus (LiteralF a) g) => g (Const a) -> g (Only (Literal a))
@@ -136,7 +136,7 @@ instance Grammar (Const ()) where
     empty = Const ()
     _ ≪|≫ _ = Const ()
 
-instance Locus h (Const ()) where
+instance (Rank2.Functor h) => Locus h (Const ()) where
     locus _ = Const ()
 
 instance Syntax (Const ()) where
@@ -171,7 +171,7 @@ instance Syntax GParser where
     symbol s = GParser (Const <$> AP.symbol s)
     char = GParser (Const <$> AP.char)
 
-instance Locus h GParser where
+instance (Rank2.Functor h) => Locus h GParser where
     locus gp = GParser (Only . Const <$> AP.erase (runGParser gp))
 
 newtype Tagger t h = Tagger { runTagger :: forall f. h f -> First (h (f :*: t)) }
@@ -186,7 +186,7 @@ instance Grammar (Tagger t) where
 class Tagging t h where
     tag :: t (L h)
 
-instance (Tagging t h) => Locus h (Tagger t) where
+instance (Tagging t h, Rank2.Functor h) => Locus h (Tagger t) where
     locus _ = Tagger (\o -> pure (Only (Pair (fromOnly o) tag)))
 
 
@@ -199,7 +199,7 @@ instance Grammar CaseEnumerator where
     empty = CaseEnumerator []
     g ≪|≫ g' = CaseEnumerator (runCaseEnumerator g ++ runCaseEnumerator g')
 
-instance Locus h CaseEnumerator where
+instance (Rank2.Functor h) => Locus h CaseEnumerator where
     locus _ = CaseEnumerator [Only (Const ())]
 
 -- Parsing strategy: reverse pretty printing.  Use CaseEnumerator to enumerate.
@@ -255,7 +255,7 @@ instance Syntax StringPrinter where
     symbol s = StringPrinter (\(Const ()) -> pure s)
     char = StringPrinter (\(Const c) -> pure [c])
 
-instance Locus h StringPrinter where
+instance (Rank2.Functor h) => Locus h StringPrinter where
     locus _ = StringPrinter (\(Only (Const s)) -> pure s)
 
 
