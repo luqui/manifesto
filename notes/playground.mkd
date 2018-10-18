@@ -150,4 +150,45 @@ accurate.  Maybe we can do it without parent, instead using the stack of labels
 we traversed to get there.  This could be accurate if the graph is always a
 tree (if not "parent" is kind of meaningless anyway?)
 
+----
+
+So here's what I'm thinking.  Instead of *annotating* the tree with grammars
+everywhere, instead just keep the grammar info at the current node, with enough
+structure that we can move it around.  
+
+    down :: (GrammarInfo (L h), h f) -> h (GrammarInfo :*: f)
+        -- or perhaps, for symmetry
+         :: (GrammarInfo :*: f) (L h) -> h (GrammarInfo :*: f)
+    up :: h (GrammarInfo :*: f) -> (GrammarInfo :*: f) (L h)
+
+The `f`s here aren't quite the right story.  Perhaps `GrammarInfo`
+*contains* that info.  In that case it's more like a `GrammarNode`:
+
+    down :: GrammarNode f (L h) -> h (GrammarNode f)
+    up :: h (GrammarNode f) -> GrammarNode f (L h)
+
+where
+
+    data GrammarNode f l where
+        GrammarNode :: ... => h Tree -> f (L h) -> GrammarNode f (L h)
+
+Which is a lot like an annotated tree except that it is not recursive.  Except
+it probably will be recursive as soon as we require these motions.  If `f` is
+made up of inherited and synthesized attributes, it makes sense that we would
+need to annotate the tree with these if we don't want to recompute them
+recursively.  Specifically, to go *down*, we need the synthesized attributes of
+further children; and to go *up* we need the inherited attributes of further
+parents.  Semantics/cosemantics doesn't give us these.
+
+But maybe we shouldn't worry about caching for now?  What if we just focused on
+getting it working recomputing everything on each motion?
+
+So what we need is a `Tree` with enough annotations that we can move around in
+it.  This is an obvious choice (that I haven't yet considered):
+
+    data Tree g l where
+        Tree :: Locus g h => h (Tree g) -> Tree g (L h)
+
+Thus every labeled node comes with a locus for whatever our desired grammar `g`
+is, which can be a product of everything we need. 
 
