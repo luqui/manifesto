@@ -89,6 +89,12 @@ data Expr f
     | Var (f (Literal String))
     | Add (f (L Expr)) (f (L Expr))
 
+instance Rank2.Functor Expr where
+    f <$> Lit x = Lit (f x)
+    f <$> Let var val body = Let (f var) (f val) (f body)
+    f <$> Var v = Var (f v)
+    f <$> Add x y = Add (f x) (f y)
+
 -- These should be automatically generated.
 _Lit :: HPrism (Only (Literal Integer)) Expr
 _Lit = Prism (\(Only l) -> Lit l)
