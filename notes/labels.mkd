@@ -1,0 +1,10 @@
+An idea occurred to me that it might be helpful if shapes were uniquely labeled.
+So instead of taking a derivative at a certain *type*, we now know exactly what
+field we are differentiating at the type level.
+
+    data L = Fun | Arg
+
+    data Expr f =
+        App (f 'Fun) (f 'Arg)
+
+

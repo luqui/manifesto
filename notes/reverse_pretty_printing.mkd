@@ -1,0 +1,61 @@
+Reverse Pretty Printing
+-----------------------
+
+Aka parsing. But we would like to use a pretty-printer-style phrasing for
+parsing.  That is, we write:
+
+    syntax (Lambda v e) = "\\" <> v <> ". " <> e
+    syntax (App a b) = a <> " " <> b
+    syntax (Var v) = v
+
+and from this a parser is derived.  The general plan of attack is that we
+enumerate the different cases, partially pretty-printing each, and seeing when
+we get a unique matching prefix.
+
+The challenges are:
+
+1. Left recursion, as usual (but now without an opportunity for a `chainl`
+   combinator because of the strict structurality)
+2. Precedence and parenthesization
+
+Precedence is difficult because the information about when to include
+parentheses is not strictly synthesized, in the AG sense; there is also
+inherited information.  It's also difficult because parentheses are optional
+(though because of canonical representation, I will remove them).  Let's tackle
+the inherited information.
+
+We could include a precedence level in `syntax` (a la `readsPrec`) but that
+feels awfully specific.  Is there a more general strategy?  I suppose we could
+leave it up to the grammar author to define the parameters of pretty printing,
+in terms of some yet more general combinators that handles the optional
+ambiguities / whitespace / etc.
+
+That is, our `syntax` is just like any other semantics; it can be a function
+type.  Let's call the type `Doc`, but understand that it is user-specified.
+Example `Doc` might be my standard lambda calculus renderer:
+
+    Doc = Bool -> Bool -> String
+
+Then to incorporate this into the incremental editor, we need function
+
+    toParser :: Doc -> Parser 
+
+which "fills in" those parameters with permissive defaults.  `Parser` is a type
+that can check prefixes, gobble strings, and demand further expansion.  I think
+we can use a rose-tree kinda thing for this, and we only need to understand one
+level at a time (then repeat).  But we need to figure out left recursion.
+
+The trick with left recursion is that we don't actually know how to
+incrementally refine the tree.  It is a better fit for bottom-up parsing, but
+this is a very top-down kind of strategy.  Maybe it needn't be so, however.
+
+Let's say we are parsing a left-associative list like
+
+    1 2 3 4 5
+    ~ [[[[1 2] 3] 4] 5]
+
+If the user types `1`, we don't know how deep it is going to be.  It depends on
+what comes later.
+
+We're getting sidetracked.  Let's focus on the features we need for the radicle
+repl.
